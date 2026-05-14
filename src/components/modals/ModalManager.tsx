@@ -39,7 +39,7 @@ export default function ModalManager() {
           e.preventDefault();
           const f = e.target as any;
           const newTask: Task = {
-            id: Math.max(...(state?.tasks.map(t => t.id) || [0]), 0) + 1,
+            id: crypto.randomUUID(),
             name: f['f-name'].value,
             project: f['f-project'].value,
             assignee: f['f-assignee'].value,
@@ -73,7 +73,7 @@ export default function ModalManager() {
           e.preventDefault();
           const f = e.target as any;
           const newProj: Project = {
-            id: Math.max(...(state?.projects.map(p => p.id) || [0]), 0) + 1,
+            id: crypto.randomUUID(),
             name: f['f-pname'].value,
             desc: f['f-pdesc'].value || 'New project',
             status: f['f-pstatus'].value as any,

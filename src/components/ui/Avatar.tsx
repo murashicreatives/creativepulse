@@ -4,6 +4,7 @@ import { useApp, COLORS } from '../../contexts/AppContext';
 interface AvatarProps {
   initials: string;
   size?: 'sm' | 'lg' | 'detail';
+  key?: any;
 }
 
 export default function Avatar({ initials, size = 'sm' }: AvatarProps) {

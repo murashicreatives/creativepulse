@@ -18,7 +18,7 @@ export default function Projects() {
         <div className="section-title">Active projects ({active.length})</div>
       </div>
       <div className="projects-grid">
-         {active.map((p: Project) => (
+         {active.map((p: any) => (
            <ProjectItem key={p.id} project={p} onClick={() => navigate(`/tasks?project=${encodeURIComponent(p.name)}`)} />
          ))}
          {active.length === 0 && <div className="col-span-full p-12 text-center text-slate-400 border-[0.5px] border-dashed border-slate-300 rounded-xl">No active projects</div>}
@@ -27,7 +27,7 @@ export default function Projects() {
   );
 }
 
-function ProjectItem({ project, onClick }: { project: Project, onClick: () => void }) {
+function ProjectItem({ project, onClick }: { project: Project, onClick: () => void, key?: any }) {
   const { state } = useApp();
   const pt = state?.tasks.filter(t => t.project === project.name) || [];
   const done = pt.filter(t => t.status === 'done').length;
@@ -44,7 +44,7 @@ function ProjectItem({ project, onClick }: { project: Project, onClick: () => vo
       <div className="progress-row"><span>Progress</span><span>{progressPercent}%</span></div>
       <div className="flex justify-between items-center">
         <div className="avatars">
-           {project.members.map((m: string) => (
+           {project.members.map((m: any) => (
              <Avatar key={m} initials={m} />
            ))}
         </div>

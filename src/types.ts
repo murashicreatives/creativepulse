@@ -10,7 +10,7 @@ export interface Comment {
 }
 
 export interface Project {
-  id: number;
+  id: string;
   name: string;
   desc: string;
   status: 'active' | 'review' | 'planning' | 'done' | 'completed';
@@ -21,7 +21,7 @@ export interface Project {
 }
 
 export interface Task {
-  id: number;
+  id: string;
   name: string;
   project: string;
   assignee: string;

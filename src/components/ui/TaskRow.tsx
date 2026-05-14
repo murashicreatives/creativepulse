@@ -3,7 +3,7 @@ import { Task } from '../../types';
 import { useApp } from '../../contexts/AppContext';
 import Avatar from './Avatar';
 
-export default function TaskRow({ task }: { task: Task }) {
+export default function TaskRow({ task }: { task: Task, key?: any }) {
   const { updateState, setModal, userPerms, showToast, today } = useApp();
 
   const isOverdue = (d: string) => d && d < today;

@@ -1,5 +1,6 @@
 import React from 'react';
 import { useApp } from '../contexts/AppContext';
+import { Task } from '../types';
 import TaskRow from '../components/ui/TaskRow';
 import Avatar from '../components/ui/Avatar';
 
@@ -52,7 +53,7 @@ export default function Team() {
         </div>
         <div className="tasks-panel text-left">
           <div className="task-list">
-            {state.tasks.filter(t => t.status !== 'done').map((t: Task) => <TaskRow key={t.id} task={t} />)}
+            {state.tasks.filter(t => t.status !== 'done').map((t: any) => <TaskRow key={t.id} task={t} />)}
           </div>
         </div>
       </div>

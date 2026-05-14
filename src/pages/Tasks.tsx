@@ -71,7 +71,7 @@ export default function Tasks() {
           ))}
         </div>
         <div className="task-list">
-          {shown.length ? shown.map((t: Task) => <TaskRow key={t.id} task={t} />) : <div className="empty-state"><i className="ti ti-circle-check"></i>Nothing here</div>}
+          {shown.length ? shown.map((t: any) => <TaskRow key={t.id} task={t} />) : <div className="empty-state"><i className="ti ti-circle-check"></i>Nothing here</div>}
         </div>
       </div>
     </div>

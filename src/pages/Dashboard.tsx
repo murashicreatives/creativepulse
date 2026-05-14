@@ -1,6 +1,6 @@
 import React from 'react';
 import { useApp } from '../contexts/AppContext';
-import { Project } from '../types';
+import { Project, Task } from '../types';
 import TaskRow from '../components/ui/TaskRow';
 import Avatar from '../components/ui/Avatar';
 import { useNavigate } from 'react-router-dom';
@@ -11,9 +11,38 @@ export default function Dashboard() {
 
   if (!state) return null;
 
+  const activeProjects = state.projects.filter(p => p.status !== 'completed');
+  
+  if (state.projects.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center animate-in fade-in duration-700">
+        <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mb-6 text-slate-300">
+          <i className="ti ti-folder-off text-4xl"></i>
+        </div>
+        <h2 className="text-xl font-bold text-slate-800 mb-2">No projects found</h2>
+        <p className="text-slate-500 text-sm max-w-sm mb-8">
+          We couldn't find any projects in your workspace. If you created them recently, they might still be syncing.
+        </p>
+        <div className="flex gap-4">
+          <button 
+            className="btn btn-primary px-6" 
+            onClick={() => window.location.reload()}
+          >
+            <i className="ti ti-refresh mr-2"></i> Refresh Data
+          </button>
+          <button 
+             className="btn bg-white border-slate-200" 
+             onClick={() => navigate('/projects')}
+          >
+            Go to Projects
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const isOverdue = (d: string) => d && d < today;
 
-  const activeProjects = state.projects.filter(p => p.status !== 'completed');
   const activeTasks = state.tasks.filter(t => {
     const p = state.projects.find(proj => proj.name === t.project);
     return !p || p.status !== 'completed';
@@ -55,7 +84,7 @@ export default function Dashboard() {
       </div>
 
       <div className="projects-grid">
-        {activeProjects.slice(0, 4).map((p: Project) => (
+        {activeProjects.slice(0, 4).map((p: any) => (
           <ProjectCard key={p.id} project={p} />
         ))}
       </div>
@@ -65,7 +94,7 @@ export default function Dashboard() {
       </div>
       <div className="tasks-panel text-left">
         <div className="task-list">
-          {activeTasks.slice(0, 5).map((t: Task) => (
+          {activeTasks.slice(0, 5).map((t: any) => (
             <TaskRow key={t.id} task={t} />
           ))}
         </div>
@@ -74,7 +103,7 @@ export default function Dashboard() {
   );
 }
 
-function ProjectCard({ project }: { project: Project }) {
+function ProjectCard({ project }: { project: Project, key?: any }) {
   const { state } = useApp();
   const navigate = useNavigate();
   
@@ -102,7 +131,7 @@ function ProjectCard({ project }: { project: Project }) {
       <div className="progress-bar"><div className="progress-fill" style={{ width: `${progressPercent}%` }}></div></div>
       <div className="progress-row"><span>{done}/{pt.length} tasks</span><span>{progressPercent}%</span></div>
       <div className="flex justify-between items-center">
-        <div className="avatars">{project.members.map((m: string) => <Avatar key={m} initials={m} />)}</div>
+        <div className="avatars">{project.members.map((m: any) => <Avatar key={m} initials={m} />)}</div>
         <span className="text-[10px] text-slate-400">{project.members.length} members</span>
       </div>
     </div>

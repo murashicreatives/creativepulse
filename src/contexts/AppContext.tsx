@@ -63,6 +63,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const today = new Date().toISOString().split('T')[0];
 
+  const showToast = (msg: string) => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, msg }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 4000);
+  };
+
   // Helper for resilient Supabase queries with timeout and retry
   const sbQuery = async <T,>(promiseFn: () => Promise<any>, timeoutMs = 45000, retries = 1): Promise<{data: T | null, error: any, status: number}> => {
     const execute = async () => {
@@ -138,18 +146,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // 2. Verify Profile & Workspace (Sequential to avoid race conditions)
         setLoadingStatus('Verifying profile...');
         let { data: profile, error: pErr, status } = await sbQuery<any>(
-          () => supabase.from('profiles').select('id, email, workspace_id').eq('id', session.user.id).maybeSingle()
+          () => supabase.from('profiles').select('id, email, workspace_id').eq('id', session.user.id).maybeSingle() as any
         );
 
         // Fallback to email lookup if not found by ID
         if (!profile && !pErr) {
           console.log('[Sync] Profile not found by ID, trying email...');
           const { data: pByEmail } = await sbQuery<any>(
-            () => supabase.from('profiles').select('*').ilike('email', userEmail).maybeSingle()
+            () => supabase.from('profiles').select('*').ilike('email', userEmail).maybeSingle() as any
           );
           if (pByEmail) {
             console.log('[Sync] Found profile by email, linking UID...');
-            await sbQuery(() => supabase.from('profiles').update({ id: session.user.id }).eq('email', pByEmail.email));
+            await sbQuery(() => supabase.from('profiles').update({ id: session.user.id }).eq('email', pByEmail.email) as any);
             profile = pByEmail;
           }
         }
@@ -163,13 +171,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
           setLoadingStatus('Setting up new account...');
           console.log('[Sync] New user init: checking workspace...');
           let { data: ws } = await sbQuery<any>(
-            () => supabase.from('workspaces').select('*').eq('owner_id', session.user.id).limit(1).maybeSingle()
+            () => supabase.from('workspaces').select('*').eq('owner_id', session.user.id).limit(1).maybeSingle() as any
           );
 
           if (!ws) {
             console.log('[Sync] Creating workspace...');
             const { data: newWs, error: wsErr } = await sbQuery<any>(
-              () => supabase.from('workspaces').insert({ name: 'My Workspace', owner_id: session.user.id }).select().maybeSingle()
+              () => supabase.from('workspaces').insert({ name: 'My Workspace', owner_id: session.user.id }).select().maybeSingle() as any
             );
             if (wsErr) throw new Error(`Workspace setup failed: ${wsErr.message}`);
             ws = newWs;
@@ -187,11 +195,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
               role: 'Workspace Owner',
               permissions: 'admin',
               color: COLORS[0]
-            }));
+            }) as any);
             if (profErr) throw new Error(`Profile setup failed: ${profErr.message}`);
             
             // Re-fetch profile after creation
-            const { data: newProf } = await sbQuery<any>(() => supabase.from('profiles').select('*').eq('id', session.user.id).single());
+            const { data: newProf } = await sbQuery<any>(() => supabase.from('profiles').select('*').eq('id', session.user.id).single() as any);
             profile = newProf;
           }
         }
@@ -222,9 +230,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         };
 
         const [pRes, tRes, uRes] = await Promise.all([
-          loadCollection<any[]>('projects', () => supabase.from('projects').select('*').eq('workspace_id', workspace_id)),
-          loadCollection<any[]>('tasks', () => supabase.from('tasks').select('*').eq('workspace_id', workspace_id)),
-          loadCollection<any[]>('profiles', () => supabase.from('profiles').select('*').eq('workspace_id', workspace_id))
+          loadCollection<any[]>('projects', () => supabase.from('projects').select('*').eq('workspace_id', workspace_id) as any),
+          loadCollection<any[]>('tasks', () => supabase.from('tasks').select('*').eq('workspace_id', workspace_id) as any),
+          loadCollection<any[]>('profiles', () => supabase.from('profiles').select('*').eq('workspace_id', workspace_id) as any)
         ]);
 
         if (pRes.error || tRes.error || uRes.error) {
@@ -264,7 +272,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const workspace_id = newState.workspace_id;
 
       if (updatedItem.type === 'project') {
-        const { error: err } = await supabase.from('projects').upsert({
+        const projectData = {
           id: updatedItem.data.id,
           workspace_id,
           name: updatedItem.data.name,
@@ -274,42 +282,46 @@ export function AppProvider({ children }: { children: ReactNode }) {
           members: updatedItem.data.members,
           color: updatedItem.data.color,
           completed_at: updatedItem.data.completedAt
-        });
+        };
+        console.log('[Supabase] Upserting project:', projectData);
+        const { error: err } = await supabase.from('projects').upsert(projectData);
         error = err;
       } else if (updatedItem.type === 'task') {
-        const { error: err } = await supabase.from('tasks').upsert({
+        const taskData = {
           ...updatedItem.data,
           workspace_id
-        });
+        };
+        console.log('[Supabase] Upserting task:', taskData);
+        const { error: err } = await supabase.from('tasks').upsert(taskData);
         error = err;
       } else if (updatedItem.type === 'person') {
-        const { error: err } = await supabase.from('profiles').upsert({
+        const personData = {
           ...updatedItem.data,
           workspace_id
-        });
+        };
+        console.log('[Supabase] Upserting profile:', personData);
+        const { error: err } = await supabase.from('profiles').upsert(personData);
         error = err;
       }
 
-      if (error) throw error;
+      if (error) {
+        console.error(`[Supabase] Save Error (${updatedItem.type}):`, error);
+        showToast(`Save failed: ${error.message || 'Check database schema'}`);
+        throw error;
+      }
       setSaveStatus('Saved');
-    } catch (e) {
-      setSaveStatus('Save failed');
+    } catch (e: any) {
+      console.error('[Supabase] Fatal Save Error:', e);
+      setSaveStatus('Save sync failed');
+      showToast('Sync error: Changes may not have saved to the cloud.');
     }
-  }, []);
+  }, [showToast]);
 
   const updateState = (updater: (prev: AppState) => AppState, updatedItem?: { type: 'project' | 'task' | 'person', data: any }) => {
     if (!state) return;
     const newState = updater(state);
     setState(newState);
     saveData(newState, updatedItem);
-  };
-
-  const showToast = (msg: string) => {
-    const id = Date.now();
-    setToasts(prev => [...prev, { id, msg }]);
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, 4000);
   };
 
   const handleLogout = async () => {

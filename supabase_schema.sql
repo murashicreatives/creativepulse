@@ -28,7 +28,7 @@ CREATE TABLE profiles (
 
 -- Projects table
 CREATE TABLE projects (
-  id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id uuid REFERENCES workspaces(id) ON DELETE CASCADE,
   name text NOT NULL,
   "desc" text,
@@ -42,7 +42,7 @@ CREATE TABLE projects (
 
 -- Tasks table
 CREATE TABLE tasks (
-  id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id uuid REFERENCES workspaces(id) ON DELETE CASCADE,
   name text NOT NULL,
   project text, 
