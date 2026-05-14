@@ -22,21 +22,32 @@ async function startServer() {
   // Admin: create user + profile
   app.post('/api/create-user', async (req, res) => {
     try {
-      const adminSecret = (req.headers['x-admin-secret'] as string) || req.body?.admin_secret;
-      if (!process.env.ADMIN_SECRET || adminSecret !== process.env.ADMIN_SECRET) {
-        return res.status(403).json({ error: 'Forbidden' });
-      }
-
       const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
       const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
       if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
         return res.status(500).json({ error: 'Server missing Supabase service role configuration' });
       }
 
-      const { email, password, name, workspace_id, permissions = 'viewer', role = 'Team Member', color } = req.body;
-      if (!email) return res.status(400).json({ error: 'email required' });
+      // Expect the caller to provide their access token so the server can verify they are an admin.
+      const authHeader = (req.headers.authorization as string) || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
+      if (!token) return res.status(401).json({ error: 'Missing authorization token' });
 
       const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+      // Verify caller's token to obtain their user id
+      const { data: callerData, error: callerErr } = await supabaseAdmin.auth.getUser(token as string);
+      if (callerErr || !callerData?.user) return res.status(401).json({ error: 'Invalid token' });
+      const callerId = callerData.user.id;
+
+      // Verify the caller has admin permissions in the profiles table
+      const { data: callerProfile } = await supabaseAdmin.from('profiles').select('permissions').eq('id', callerId).maybeSingle();
+      if (!callerProfile || callerProfile.permissions !== 'admin') {
+        return res.status(403).json({ error: 'Only workspace admins can create accounts' });
+      }
+
+      const { email, password, name, workspace_id, permissions = 'viewer', role = 'Team Member', color } = req.body;
+      if (!email) return res.status(400).json({ error: 'email required' });
 
       const tempPassword = password || (Math.random().toString(36).slice(-10) + 'aA1!');
       const createRes: any = await supabaseAdmin.auth.admin.createUser({
