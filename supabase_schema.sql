@@ -16,13 +16,13 @@ CREATE TABLE workspaces (
 
 -- Profiles table (linked to auth.users and workspaces)
 CREATE TABLE profiles (
-  id uuid REFERENCES auth.users(id),
+  id uuid PRIMARY KEY REFERENCES auth.users(id),
   workspace_id uuid REFERENCES workspaces(id) ON DELETE CASCADE,
   initials text NOT NULL,
   name text NOT NULL,
   role text,
-  email text PRIMARY KEY,
-  permissions text CHECK (permissions IN ('admin', 'editor', 'viewer')),
+  email text UNIQUE NOT NULL,
+  permissions text CHECK (permissions IN ('admin', 'editor', 'viewer')) DEFAULT 'viewer',
   color jsonb -- {bg: string, txt: string}
 );
 
@@ -80,11 +80,21 @@ CREATE POLICY "Allow workspace owner to update" ON workspaces
 CREATE POLICY "Allow anyone to create a profile" ON profiles
   FOR INSERT WITH CHECK (true);
 
-CREATE POLICY "Allow users to read profiles in their workspace" ON profiles
-  FOR SELECT USING (true); -- Allow read for login discovery
+CREATE POLICY "Allow everyone to view profiles" ON profiles
+  FOR SELECT USING (true); 
 
-CREATE POLICY "Allow user to update own profile" ON profiles
+CREATE POLICY "Allow users to update own profile" ON profiles
   FOR UPDATE USING (auth.uid() = id);
+
+CREATE POLICY "Allow workspace admins to update profiles" ON profiles
+  FOR UPDATE USING (
+    EXISTS (
+      SELECT 1 FROM profiles 
+      WHERE id = auth.uid() 
+      AND workspace_id = profiles.workspace_id 
+      AND permissions = 'admin'
+    )
+  );
 
 -- Project Policies
 CREATE POLICY "Project Workspace Access" ON projects 

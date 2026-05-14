@@ -31,9 +31,9 @@ const PERMISSIONS = {
 
 export default function App() {
   const [state, setState] = useState<AppState | null>(null);
-  const [view, setView] = useState('dashboard');
+  const [view, setView] = useState(localStorage.getItem('active_view') || 'dashboard');
   const [taskTab, setTaskTab] = useState('all');
-  const [filterProject, setFilterProject] = useState<string | null>(null);
+  const [filterProject, setFilterProject] = useState<string | null>(localStorage.getItem('filter_project'));
   const [userEmail, setUserEmail] = useState<string | null>(localStorage.getItem('user_email'));
   const [modal, setModal] = useState<{ type: string, data?: any } | null>(null);
   const [saveStatus, setSaveStatus] = useState('Saved');
@@ -53,92 +53,61 @@ export default function App() {
     }
   }, []);
 
+  const navigate = (v: string, p: string | null = null) => {
+    setView(v);
+    setFilterProject(p);
+    localStorage.setItem('active_view', v);
+    if (p) {
+      localStorage.setItem('filter_project', p);
+    } else {
+      localStorage.removeItem('filter_project');
+    }
+    setIsSidebarOpen(false);
+  };
+
   useEffect(() => {
     // Listen for auth changes to sync profile and initials
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('Auth event:', event, 'User:', session?.user?.email);
+      
       if (session?.user) {
         const email = session.user.email;
         if (!email) return;
 
-        // Fetch profile with workspace_id
-        const { data: profile } = await supabase
+        // Try to fetch profile with workspace_id
+        const { data: profile, error: profFetchErr } = await supabase
           .from('profiles')
           .select('*')
           .eq('email', email)
-          .single();
+          .maybeSingle();
 
         if (profile) {
           setUserEmail(email);
           localStorage.setItem('user_email', email);
-          
-          // Link ID if missing (staff login case)
-          if (!profile.id) {
-            await supabase.from('profiles').update({ id: session.user.id }).eq('email', email);
+          if (profile.id !== session.user.id) {
+            await supabase.from('profiles').update({ id: session.user.id }).eq('id', profile.id);
           }
-        } else if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
-          // New Google/OAuth user? Create default workspace
-          console.log('No profile found, checking if we need to create one for UID:', session.user.id);
-          
-          // Double check if a profile with this email exists (e.g. Google user matches an existing email signup)
-          const { data: existingProfile } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('email', email)
-            .maybeSingle();
-
-          if (existingProfile) {
-            // Found profile by email, link the ID and continue
-            await supabase.from('profiles').update({ id: session.user.id }).eq('email', email);
+          // New User or OAuth user? Create profile
+          console.log('Initializing user...');
+          const { data: pById } = await supabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle();
+          if (pById) {
             setUserEmail(email);
             localStorage.setItem('user_email', email);
-            localStorage.setItem('user_initials', existingProfile.initials);
             return;
           }
 
-          // First, check if a workspace already exists for this owner to avoid duplicates
-          let { data: ws } = await supabase
-            .from('workspaces')
-            .select('*')
-            .eq('owner_id', session.user.id)
-            .limit(1)
-            .maybeSingle();
-
+          let { data: ws } = await supabase.from('workspaces').select('*').eq('owner_id', session.user.id).limit(1).maybeSingle();
           if (!ws) {
-            console.log('Creating new workspace for OAuth user');
-            const { data: newWs, error: wsErr } = await supabase
-              .from('workspaces')
-              .insert({ name: 'My Workspace', owner_id: session.user.id })
-              .select()
-              .single();
+            const { data: newWs } = await supabase.from('workspaces').insert({ name: 'My Workspace', owner_id: session.user.id }).select().single();
             ws = newWs;
-            if (wsErr) {
-              console.error('Workspace creation error:', wsErr);
-              setLoginError('Failed to create workspace. Check RLS policies.');
-              return;
-            }
           }
-          
           if (ws) {
             const initials = email.substring(0, 2).toUpperCase();
-            const { error: profErr } = await supabase.from('profiles').insert({
-              id: session.user.id,
-              workspace_id: ws.id,
-              initials,
-              name: email.split('@')[0],
-              email,
-              role: 'Workspace Owner',
-              permissions: 'admin',
-              color: COLORS[0]
+            await supabase.from('profiles').insert({
+              id: session.user.id, workspace_id: ws.id, initials, name: email.split('@')[0], email, role: 'Workspace Owner', permissions: 'admin', color: COLORS[0]
             });
-
-            if (profErr) {
-              console.error('Profile creation error:', profErr);
-              setLoginError('Failed to create profile: ' + profErr.message);
-            } else {
-              setUserEmail(email);
-              localStorage.setItem('user_email', email);
-              localStorage.setItem('user_initials', initials);
-            }
+            setUserEmail(email);
+            localStorage.setItem('user_email', email);
           }
         }
       } else {
@@ -363,9 +332,11 @@ export default function App() {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
+    localStorage.clear(); // Clear everything for a fresh start
     setUserEmail(null);
-    localStorage.removeItem('user_email');
-    localStorage.removeItem('user_initials');
+    setState(null);
+    setView('dashboard');
+    setFilterProject(null);
   };
 
   const handleGoogleLogin = async () => {
@@ -508,7 +479,7 @@ export default function App() {
     const [bClass, bText] = (badges[project.status] || 'badge-done ' + project.status).split(' ');
 
     return (
-      <div className="project-card" onClick={() => { setView(view === 'kanban' ? 'kanban' : 'tasks'); setFilterProject(project.name); setTaskTab('all'); }}>
+      <div className="project-card" onClick={() => { navigate('tasks', project.name); setTaskTab('all'); }}>
         <div className="project-header">
           <div className="project-name">{project.name}</div>
           <span className={`project-badge ${bClass}`}>{bText}</span>
@@ -580,7 +551,7 @@ export default function App() {
           <div className="metric-card"><div className="metric-label"><i className="ti ti-clock" style={{ color: '#185FA5' }}></i>In progress</div><div className="metric-value">{total - done}</div><div className="metric-sub">remaining</div></div>
           <div className="metric-card"><div className="metric-label"><i className="ti ti-alert-circle" style={{ color: '#A32D2D' }}></i>Overdue</div><div className="metric-value" style={ov > 0 ? { color: '#A32D2D' } : {}}>{ov}</div><div className="metric-sub">{ov > 0 ? 'needs attention' : 'all on track'}</div></div>
         </div>
-        <div className="section-header"><div className="section-title">Projects</div><button className="btn text-[11px] py-1 px-[9px]" onClick={() => setView('projects')}>See all</button></div>
+        <div className="section-header"><div className="section-title">Projects</div><button className="btn text-[11px] py-1 px-[9px]" onClick={() => navigate('projects')}>See all</button></div>
         <div className="projects-grid">{activeProjects.slice(0, 4).map(p => <ProjectCard key={p.id} project={p} />)}</div>
         <div className="section-header mt-4"><div className="section-title">Recent tasks</div></div>
         <div className="tasks-panel text-left"><div className="task-list">{activeTasks.slice(0, 5).map(t => <TaskRow key={t.id} task={t} />)}</div></div>
@@ -700,21 +671,26 @@ export default function App() {
       <div className="people-grid">
         {state.people.map(p => {
           const a = state.tasks.filter(t => t.assignee === p.initials), d = a.filter(t => t.status === 'done').length;
+          const isMe = p.email === userEmail;
+          const canEdit = userPerms.manageTeam || isMe;
+          
           return (
-            <div key={p.initials} className="person-card relative group">
-              {userPerms.manageTeam && (
+            <div key={p.email} className={`person-card relative group ${isMe ? 'border-indigo-200 bg-indigo-50/30' : ''}`}>
+              {canEdit && (
                 <button 
-                  className="absolute top-2 right-2 p-1 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity hover:text-slate-600"
+                  className="absolute top-2 right-2 p-1 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity hover:text-slate-600 focus:opacity-100"
                   onClick={() => setModal({ type: 'person', data: p })}
+                  title={isMe ? "Edit profile" : "Manage member"}
                 >
                   <i className="ti ti-edit text-sm"></i>
                 </button>
               )}
+              {isMe && <div className="absolute top-2 left-2 text-[8px] font-bold uppercase tracking-widest text-indigo-500 bg-indigo-50 px-1 rounded">You</div>}
               <Avatar initials={p.initials} size="lg" />
               <div className="person-name">{p.name}</div>
               <div className="person-role">{p.role}</div>
               <div className="text-[10px] text-slate-400 mt-1">{p.email}</div>
-              <div className="text-[9px] uppercase tracking-wider font-bold text-slate-500 mt-2 bg-slate-100 rounded px-1.5 py-0.5 inline-block">{p.permissions}</div>
+              <div className="text-[9px] uppercase tracking-wider font-bold text-slate-500 mt-2 bg-white/60 border border-slate-100 rounded px-1.5 py-0.5 inline-block">{p.permissions}</div>
               <div className="person-stats mt-4">
                 <div className="pstat"><strong>{a.length}</strong>tasks</div>
                 <div className="pstat"><strong>{d}</strong>done</div>
@@ -802,10 +778,16 @@ export default function App() {
 
     if (type === 'person') {
        const person = data as Person | undefined;
+       const isMe = person?.email === userEmail;
+       const [selectedColor, setSelectedColor] = useState(person?.color || COLORS[0]);
+
        return (
         <div className="modal-overlay" onClick={() => setModal(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-title">{person ? 'Edit member' : 'Add member'} <button className="modal-close" onClick={() => setModal(null)}><i className="ti ti-x"></i></button></div>
+            <div className="modal-title">
+              {person ? (isMe ? 'Edit your profile' : 'Edit member') : 'Add member'} 
+              <button className="modal-close" onClick={() => setModal(null)}><i className="ti ti-x"></i></button>
+            </div>
             <form onSubmit={e => {
               e.preventDefault();
               const f = e.target as any;
@@ -817,14 +799,15 @@ export default function App() {
                   initials,
                   name: f['f-uname'].value,
                   email: f['f-uemail'].value,
-                  password: f['f-upass'].value || person.password,
-                  permissions: f['f-uperms'].value as any,
+                  password: f['f-upass']?.value || person.password,
+                  permissions: (f['f-uperms']?.value || person.permissions) as any,
                   role: f['f-urole'].value || 'Team Member',
-                  workspace_id: state.workspace_id
+                  workspace_id: state.workspace_id,
+                  color: selectedColor
                 };
                 updateState(prev => ({
                   ...prev,
-                  people: prev.people.map(p => p.initials === person.initials ? updatedPerson : p),
+                  people: prev.people.map(p => p.email === person.email ? updatedPerson : p),
                   tasks: prev.tasks.map(t => t.assignee === person.initials ? { ...t, assignee: initials } : t)
                 }), { type: 'person', data: updatedPerson });
               } else {
@@ -835,23 +818,68 @@ export default function App() {
                   password: f['f-upass'].value || 'password123',
                   permissions: f['f-uperms'].value as any,
                   role: f['f-urole'].value || 'Team Member',
-                  color: COLORS[state.people.length % COLORS.length]
+                  color: selectedColor
                 };
                 updateState(prev => ({ ...prev, people: [...prev.people, newPerson] }), { type: 'person', data: { ...newPerson, workspace_id: state.workspace_id } });
               }
               setModal(null);
             }}>
               <div className="form-row">
-                <div className="form-group"><label className="form-label">Full name</label><input className="form-input" name="f-uname" defaultValue={person?.name} placeholder="Full name" required /></div>
-                <div className="form-group"><label className="form-label">Initials (2 letters)</label><input className="form-input" name="f-uinitials" defaultValue={person?.initials} placeholder="e.g. AB" maxLength={2} required /></div>
+                <div className="form-group flex-1">
+                  <label className="form-label">Full name</label>
+                  <input className="form-input" name="f-uname" defaultValue={person?.name} placeholder="Full name" required />
+                </div>
+                <div className="form-group w-32">
+                  <label className="form-label">Initials</label>
+                  <input className="form-input" name="f-uinitials" defaultValue={person?.initials} placeholder="e.g. AB" maxLength={2} required />
+                </div>
               </div>
-              <div className="form-group"><label className="form-label">Email Address</label><input type="email" className="form-input" name="f-uemail" defaultValue={person?.email} placeholder="email@company.com" required /></div>
-              <div className="form-group"><label className="form-label">{person ? 'Change Password' : 'Temporary Password'}</label><input type="text" className="form-input" name="f-upass" placeholder={person ? "Leave blank to keep current" : "Leave blank for password123"} /></div>
-              <div className="form-row">
-                <div className="form-group"><label className="form-label">Role</label><input className="form-input" name="f-urole" defaultValue={person?.role} placeholder="e.g. Product Designer" /></div>
+
+              <div className="form-group">
+                <label className="form-label">Profile Theme</label>
+                <div className="flex gap-2.5 mt-2 flex-wrap">
+                  {COLORS.map((c, i) => (
+                    <button 
+                      key={i} 
+                      type="button"
+                      className={`w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 flex items-center justify-center ${selectedColor.bg === c.bg ? 'border-indigo-600 scale-110 shadow-sm' : 'border-transparent'}`}
+                      style={{ background: c.bg, color: c.txt }}
+                      onClick={() => setSelectedColor(c)}
+                    >
+                      {selectedColor.bg === c.bg && <i className="ti ti-check text-xs"></i>}
+                    </button>
+                  ))}
+                  <div className="ml-4 w-10 h-10 rounded-full flex items-center justify-center text-[10px] font-bold border border-slate-100" style={{ background: selectedColor.bg, color: selectedColor.txt }}>
+                    {person?.initials || '??'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Email Address</label>
+                <input type="email" className="form-input" name="f-uemail" defaultValue={person?.email} placeholder="email@company.com" required disabled={!!person && !userPerms.manageTeam} />
+              </div>
+              
+              {userPerms.manageTeam && (
                 <div className="form-group">
+                  <label className="form-label">{person ? 'Change Password' : 'Temporary Password'}</label>
+                  <input type="text" className="form-input" name="f-upass" placeholder={person ? "Leave blank to keep current" : "Leave blank for password123"} />
+                </div>
+              )}
+
+              <div className="form-row">
+                <div className="form-group flex-1">
+                  <label className="form-label">Role</label>
+                  <input className="form-input" name="f-urole" defaultValue={person?.role} placeholder="e.g. Product Designer" />
+                </div>
+                <div className="form-group flex-1">
                   <label className="form-label">Permissions Level</label>
-                  <select className="form-select" name="f-uperms" defaultValue={person?.permissions || 'viewer'}>
+                  <select 
+                    className="form-select" 
+                    name="f-uperms" 
+                    defaultValue={person?.permissions || 'viewer'} 
+                    disabled={!userPerms.manageTeam}
+                  >
                     <option value="viewer">Viewer (Read-only)</option>
                     <option value="editor">Editor (Edit everything)</option>
                     <option value="admin">Admin (Full Control)</option>
@@ -859,19 +887,19 @@ export default function App() {
                 </div>
               </div>
               <div className="modal-actions">
-                {person && (
+                {person && userPerms.manageTeam && !isMe && (
                   <button type="button" className="btn mr-auto text-[#A32D2D] hover:bg-red-50" onClick={() => {
                     if (confirm(`Are you sure you want to remove ${person.name}?`)) {
                       updateState(prev => ({
                         ...prev,
-                        people: prev.people.filter(p => p.initials !== person.initials)
+                        people: prev.people.filter(p => p.email !== person.email)
                       }));
                       setModal(null);
                     }
-                  }}><i className="ti ti-trash"></i> Delete</button>
+                  }}><i className="ti ti-trash"></i> Remove</button>
                 )}
                 <button type="button" className="btn" onClick={() => setModal(null)}>Cancel</button>
-                <button type="submit" className="btn btn-primary">{person ? 'Save Changes' : 'Add'}</button>
+                <button type="submit" className="btn btn-primary">{person ? 'Save Changes' : 'Update Profile'}</button>
               </div>
             </form>
           </div>
@@ -995,16 +1023,16 @@ export default function App() {
       <aside className={`sidebar ${isSidebarOpen ? 'mobile-open' : ''}`}>
         <div className="sidebar-logo"><i className="ti ti-layout-kanban"></i> Creative Pulse</div>
         <nav className="sidebar-nav">
-          <NavItem id="dashboard" icon="home" label="Dashboard" active={view === 'dashboard' && !filterProject} onClick={() => { setView('dashboard'); setFilterProject(null); setIsSidebarOpen(false); }} />
-          <NavItem id="kanban" icon="layout-columns" label="Kanban" active={view === 'kanban' && !filterProject} onClick={() => { setView('kanban'); setFilterProject(null); setIsSidebarOpen(false); }} />
-          <NavItem id="projects" icon="folder" label="Projects" active={view === 'projects'} onClick={() => { setView('projects'); setFilterProject(null); setIsSidebarOpen(false); }} />
-          <NavItem id="tasks" icon="checkbox" label="Tasks" active={view === 'tasks' && !filterProject} onClick={() => { setView('tasks'); setFilterProject(null); setIsSidebarOpen(false); }} />
-          <NavItem id="people" icon="users" label="Team" active={view === 'people'} onClick={() => { setView('people'); setFilterProject(null); setIsSidebarOpen(false); }} />
-          <NavItem id="completed" icon="archive" label="Archive" active={view === 'completed'} onClick={() => { setView('completed'); setFilterProject(null); setIsSidebarOpen(false); }} />
+          <NavItem id="dashboard" icon="home" label="Dashboard" active={view === 'dashboard' && !filterProject} onClick={() => navigate('dashboard')} />
+          <NavItem id="kanban" icon="layout-columns" label="Kanban" active={view === 'kanban' && !filterProject} onClick={() => navigate('kanban')} />
+          <NavItem id="projects" icon="folder" label="Projects" active={view === 'projects'} onClick={() => navigate('projects')} />
+          <NavItem id="tasks" icon="checkbox" label="Tasks" active={view === 'tasks' && !filterProject} onClick={() => navigate('tasks')} />
+          <NavItem id="people" icon="users" label="Team" active={view === 'people'} onClick={() => navigate('people')} />
+          <NavItem id="completed" icon="archive" label="Archive" active={view === 'completed'} onClick={() => navigate('completed')} />
           
           <div className="sidebar-section">Active Projects</div>
           {state.projects.filter(p => p.status !== 'completed').map(p => (
-            <button key={p.id} className={`nav-item ${filterProject === p.name ? 'active font-medium' : ''}`} onClick={() => { setView('tasks'); setFilterProject(p.name); setTaskTab('all'); setIsSidebarOpen(false); }}>
+            <button key={p.id} className={`nav-item ${filterProject === p.name ? 'active font-medium' : ''}`} onClick={() => navigate('tasks', p.name)}>
               <span className="w-1.5 h-1.5 rounded-full inline-block mr-2" style={{ background: p.color }}></span> {p.name}
             </button>
           ))}
@@ -1049,8 +1077,8 @@ export default function App() {
         <div className="content">
           {view === 'dashboard' && !filterProject && <Dashboard />}
           {view === 'kanban' && <Kanban />}
-          {view === 'projects' && !filterProject && <ProjectsGrid projects={state.projects} onSelect={(p: Project) => { setView('tasks'); setFilterProject(p.name); }} state={state} />}
-          {view === 'completed' && <CompletedProjects state={state} onSelect={(p: Project) => { setView('tasks'); setFilterProject(p.name); }} />}
+          {view === 'projects' && !filterProject && <ProjectsGrid projects={state.projects} onSelect={(p: Project) => navigate('tasks', p.name)} state={state} />}
+          {view === 'completed' && <CompletedProjects state={state} onSelect={(p: Project) => navigate('tasks', p.name)} />}
           {view === 'tasks' && <Tasks />}
           {view === 'people' && <Team />}
         </div>
