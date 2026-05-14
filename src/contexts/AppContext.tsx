@@ -298,21 +298,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
           color: updatedItem.data.color,
           completed_at: updatedItem.data.completedAt
         };
-        const { data: upsertData, error: err } = await supabase.from('projects').upsert(projectData).select();
+        const { error: err } = await supabase.from('projects').upsert(projectData);
         error = err;
       } else if (updatedItem.type === 'task') {
         const taskData = {
           ...updatedItem.data,
           workspace_id
         };
-        const { data: upsertData, error: err } = await supabase.from('tasks').upsert(taskData).select();
+        const { error: err } = await supabase.from('tasks').upsert(taskData);
         error = err;
       } else if (updatedItem.type === 'person') {
         const personData = {
           ...updatedItem.data,
           workspace_id
         };
-        const { data: upsertData, error: err } = await supabase.from('profiles').upsert(personData).select();
+        const { error: err } = await supabase.from('profiles').upsert(personData);
         error = err;
       }
 
