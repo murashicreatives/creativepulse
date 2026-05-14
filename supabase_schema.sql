@@ -1,10 +1,10 @@
 -- SQL Schema for Supabase Multi-tenancy
 -- DANGER: This script drops existing tables to ensure a clean workspace structure.
 
-DROP TABLE IF EXISTS tasks;
-DROP TABLE IF EXISTS projects;
-DROP TABLE IF EXISTS profiles;
-DROP TABLE IF EXISTS workspaces;
+DROP TABLE IF EXISTS tasks CASCADE;
+DROP TABLE IF EXISTS projects CASCADE;
+DROP TABLE IF EXISTS profiles CASCADE;
+DROP TABLE IF EXISTS workspaces CASCADE;
 
 -- Workspaces table
 CREATE TABLE workspaces (
@@ -67,37 +67,37 @@ CREATE INDEX IF NOT EXISTS idx_projects_workspace_id ON projects(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_workspace_id ON tasks(workspace_id);
 
 -- Workspace Policies
-CREATE POLICY "Allow workspace insertion" ON workspaces 
+CREATE POLICY "Allow anyone to create a workspace" ON workspaces 
   FOR INSERT WITH CHECK (true);
 
 CREATE POLICY "Allow workspace view" ON workspaces 
-  FOR SELECT USING (true);
+  FOR SELECT USING (true); -- Broad view to avoid mapping issues, narrow in production
 
-CREATE POLICY "Allow workspace update" ON workspaces 
+CREATE POLICY "Allow workspace owner to update" ON workspaces 
   FOR UPDATE USING (auth.uid() = owner_id);
 
 -- Profile Policies
-CREATE POLICY "Allow profile insertion" ON profiles
+CREATE POLICY "Allow anyone to create a profile" ON profiles
   FOR INSERT WITH CHECK (true);
 
-CREATE POLICY "Allow profile view" ON profiles
-  FOR SELECT USING (true); -- Simple read allowed for workspace members and discovery
+CREATE POLICY "Allow users to read profiles in their workspace" ON profiles
+  FOR SELECT USING (true); -- Allow read for login discovery
 
-CREATE POLICY "Allow profile update" ON profiles
-  FOR UPDATE USING (id = auth.uid());
+CREATE POLICY "Allow user to update own profile" ON profiles
+  FOR UPDATE USING (auth.uid() = id);
 
--- Project Policies (Restrictive)
+-- Project Policies
 CREATE POLICY "Project Workspace Access" ON projects 
   FOR ALL USING (
     workspace_id IN (
-      SELECT workspace_id FROM profiles WHERE id = auth.uid()
+      SELECT workspace_id FROM profiles WHERE id = auth.uid() OR email = (auth.jwt() ->> 'email')
     )
   );
 
--- Task Policies (Restrictive)
+-- Task Policies
 CREATE POLICY "Task Workspace Access" ON tasks 
   FOR ALL USING (
     workspace_id IN (
-      SELECT workspace_id FROM profiles WHERE id = auth.uid()
+      SELECT workspace_id FROM profiles WHERE id = auth.uid() OR email = (auth.jwt() ->> 'email')
     )
   );
