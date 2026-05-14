@@ -44,6 +44,10 @@ export default function App() {
   const [isSignUp, setIsSignUp] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
   const currentUser = state?.people.find(p => p.email === userEmail);
   const userPerms = currentUser ? (PERMISSIONS[currentUser.permissions] || PERMISSIONS.viewer) : PERMISSIONS.viewer;
 
@@ -74,45 +78,79 @@ export default function App() {
         const email = session.user.email;
         if (!email) return;
 
-        // Try to fetch profile with workspace_id
-        const { data: profile, error: profFetchErr } = await supabase
+        // 1. Try to fetch profile by email
+        const { data: profileByEmail } = await supabase
           .from('profiles')
           .select('*')
           .eq('email', email)
           .maybeSingle();
 
-        if (profile) {
+        if (profileByEmail) {
+          console.log('Found profile by email', email);
           setUserEmail(email);
           localStorage.setItem('user_email', email);
-          if (profile.id !== session.user.id) {
-            await supabase.from('profiles').update({ id: session.user.id }).eq('id', profile.id);
+          
+          if (profileByEmail.id !== session.user.id) {
+            console.log('Linking UID to existing profile');
+            await supabase.from('profiles').update({ id: session.user.id }).eq('email', email);
           }
-          // New User or OAuth user? Create profile
-          console.log('Initializing user...');
-          const { data: pById } = await supabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle();
-          if (pById) {
-            setUserEmail(email);
-            localStorage.setItem('user_email', email);
+          setRefreshTrigger(prev => prev + 1);
+          return;
+        }
+
+        // 2. Try to fetch profile by ID (Google user)
+        const { data: profileById } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .maybeSingle();
+
+        if (profileById) {
+          console.log('Found profile by ID', session.user.id);
+          setUserEmail(email);
+          localStorage.setItem('user_email', email);
+          setRefreshTrigger(prev => prev + 1);
+          return;
+        }
+
+        // 3. New User? Initialize workspace and profile
+        console.log('No profile found, initializing new workspace...');
+        let { data: ws } = await supabase.from('workspaces').select('*').eq('owner_id', session.user.id).limit(1).maybeSingle();
+        if (!ws) {
+          const { data: newWs, error: wsErr } = await supabase.from('workspaces').insert({ name: 'My Workspace', owner_id: session.user.id }).select().single();
+          if (wsErr) {
+            console.error('WS Error:', wsErr);
+            setLoginError('Initialization failed.');
             return;
           }
+          ws = newWs;
+        }
 
-          let { data: ws } = await supabase.from('workspaces').select('*').eq('owner_id', session.user.id).limit(1).maybeSingle();
-          if (!ws) {
-            const { data: newWs } = await supabase.from('workspaces').insert({ name: 'My Workspace', owner_id: session.user.id }).select().single();
-            ws = newWs;
-          }
-          if (ws) {
-            const initials = email.substring(0, 2).toUpperCase();
-            await supabase.from('profiles').insert({
-              id: session.user.id, workspace_id: ws.id, initials, name: email.split('@')[0], email, role: 'Workspace Owner', permissions: 'admin', color: COLORS[0]
-            });
+        if (ws) {
+          const initials = email.substring(0, 2).toUpperCase();
+          const { error: profErr } = await supabase.from('profiles').insert({
+            id: session.user.id, 
+            workspace_id: ws.id, 
+            initials, 
+            name: email.split('@')[0], 
+            email, 
+            role: 'Workspace Owner', 
+            permissions: 'admin', 
+            color: COLORS[0]
+          });
+          
+          if (profErr) {
+            console.error('Prof Error:', profErr);
+          } else {
             setUserEmail(email);
             localStorage.setItem('user_email', email);
+            setRefreshTrigger(prev => prev + 1);
           }
         }
       } else {
         setUserEmail(null);
         localStorage.removeItem('user_email');
+        setState(null);
       }
     });
 
@@ -120,12 +158,25 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const fetchData = async () => {
+    const fetchData = async (retries = 3) => {
       if (!userEmail) return;
       
       try {
-        const { data: profile } = await supabase.from('profiles').select('workspace_id').eq('email', userEmail).single();
-        if (!profile) return;
+        console.log('Fetching data for', userEmail);
+        const { data: profile, error: pErr } = await supabase.from('profiles').select('workspace_id').eq('email', userEmail).maybeSingle();
+        
+        if (pErr) throw pErr;
+
+        if (!profile) {
+          if (retries > 0) {
+            console.log(`Profile not found, retrying in 1s... (${retries} left)`);
+            setTimeout(() => fetchData(retries - 1), 1000);
+          } else {
+            setFetchError('Profile not found. Please try logging out and back in.');
+          }
+          return;
+        }
+
         const workspace_id = profile.workspace_id;
 
         const [pRes, tRes, uRes] = await Promise.all([
@@ -134,7 +185,7 @@ export default function App() {
           supabase.from('profiles').select('*').eq('workspace_id', workspace_id)
         ]);
 
-        if (pRes.error || tRes.error || uRes.error) throw new Error('Supabase fetch failed');
+        if (pRes.error || tRes.error || uRes.error) throw new Error('Failed to load workspace data');
 
         setState({
           workspace_id,
@@ -145,12 +196,14 @@ export default function App() {
           tasks: (tRes.data || []) as Task[],
           people: (uRes.data || []) as Person[]
         });
-      } catch (err) {
+        setFetchError(null);
+      } catch (err: any) {
         console.error(err);
+        setFetchError(err.message || 'Connection failed');
       }
     };
     fetchData();
-  }, [userEmail]);
+  }, [userEmail, refreshTrigger]);
 
   const saveData = useCallback(async (newState: AppState, updatedItem?: { type: 'project' | 'task' | 'person', data: any }) => {
     setSaveStatus('Saving…');
@@ -434,9 +487,16 @@ export default function App() {
     <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50">
       <div className="text-indigo-600 text-3xl mb-4 animate-bounce"><i className="ti ti-layout-kanban"></i></div>
       <div className="text-slate-500 font-medium">Preparing your workspace...</div>
-      <div className="mt-2 w-48 h-1 bg-slate-200 rounded-full overflow-hidden">
-        <div className="loading-bar-fill h-full bg-indigo-500 w-1/3 animate-[loading_1.5s_infinite_ease-in-out]"></div>
-      </div>
+      {fetchError ? (
+        <div className="mt-4 flex flex-col items-center">
+          <div className="text-red-500 text-xs mb-3">{fetchError}</div>
+          <button className="btn text-xs" onClick={() => handleLogout()}>Log out and try again</button>
+        </div>
+      ) : (
+        <div className="mt-2 w-48 h-1 bg-slate-200 rounded-full overflow-hidden">
+          <div className="loading-bar-fill h-full bg-indigo-500 w-1/3 animate-[loading_1.5s_infinite_ease-in-out]"></div>
+        </div>
+      )}
     </div>
   );
 
