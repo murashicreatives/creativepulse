@@ -61,6 +61,8 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isKanbanExpanded, setIsKanbanExpanded] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   const currentUser = state?.people.find(p => p.initials === loggedInInitials);
   const userPerms = currentUser ? (PERMISSIONS[currentUser.permissions] || PERMISSIONS.viewer) : PERMISSIONS.viewer;
@@ -72,7 +74,57 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Listen for auth changes to sync profile and initials
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user) {
+        const email = session.user.email;
+        if (!email) return;
+
+        // Try to fetch existing profile
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('email', email)
+          .single();
+
+        if (profile) {
+          setLoggedInInitials(profile.initials);
+          localStorage.setItem('user_initials', profile.initials);
+        } else {
+          // Auto-create profile if missing
+          const initials = email.substring(0, 2).toUpperCase();
+          const newProfile = {
+            initials,
+            name: email.split('@')[0],
+            email,
+            role: 'Team Member',
+            permissions: 'editor',
+            color: COLORS[Math.floor(Math.random() * COLORS.length)]
+          };
+          
+          const { error } = await supabase.from('profiles').insert(newProfile);
+          if (!error) {
+            setLoggedInInitials(initials);
+            localStorage.setItem('user_initials', initials);
+            // Refresh local state if initialized
+            if (state) {
+              setState(prev => prev ? ({ ...prev, people: [...prev.people, newProfile] }) : null);
+            }
+          }
+        }
+      } else {
+        setLoggedInInitials(null);
+        localStorage.removeItem('user_initials');
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [state]);
+
+  useEffect(() => {
     const fetchData = async () => {
+      if (!loggedInInitials) return;
+      
       try {
         const { data: projects, error: pError } = await supabase.from('projects').select('*');
         const { data: tasks, error: tError } = await supabase.from('tasks').select('*');
@@ -80,14 +132,11 @@ export default function App() {
 
         if (pError || tError || uError) throw new Error('Supabase fetch failed');
 
-        if (projects && projects.length > 0) {
-          // Map snake_case from DB to camelCase in app if needed, 
-          // or just ensure DB columns match types.
-          // For now, I'll assume columns match for simplicity or help the user later.
+        if (projects && (projects.length > 0 || tasks.length > 0)) {
           setState({
             projects: projects.map(p => ({
               ...p,
-              completedAt: p.completed_at // handle mapping
+              completedAt: p.completed_at
             })) as Project[],
             tasks: tasks as Task[],
             people: people as Person[]
@@ -101,7 +150,7 @@ export default function App() {
       }
     };
     fetchData();
-  }, []);
+  }, [loggedInInitials]);
 
   const saveData = useCallback(async (newState: AppState, updatedItem?: { type: 'project' | 'task' | 'person', data: any }) => {
     setSaveStatus('Saving…');
@@ -181,32 +230,36 @@ export default function App() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoggingIn(true);
+    setLoginError(null);
     const f = e.target as any;
     const email = f.email.value;
     const password = f.password.value;
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      if (isSignUp) {
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+        });
+        if (error) throw error;
+        if (data.user) {
+          showToast('Account created! Please check your email if verification is required.');
+          if (data.session) {
+            // Already logged in
+          } else {
+            setLoginError('Verification email sent. Please check your inbox.');
+          }
+        }
+      } else {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
 
-      if (error) throw error;
-
-      if (data.user) {
-        // Find corresponding person in our profiles table for UI initials/name
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('initials')
-          .eq('email', email)
-          .single();
-          
-        const initials = profile?.initials || email.substring(0, 2).toUpperCase();
-        setLoggedInInitials(initials);
-        localStorage.setItem('user_initials', initials);
+        if (error) throw error;
       }
     } catch (e: any) {
-      alert(e.message || 'Login failed');
+      setLoginError(e.message || 'Authentication failed');
     } finally {
       setIsLoggingIn(false);
     }
@@ -218,14 +271,19 @@ export default function App() {
     localStorage.removeItem('user_initials');
   };
 
-  if (!state) return <div className="p-8 text-center text-slate-500">Loading Workspace...</div>;
-
   if (!loggedInInitials) {
     return (
       <div className="login-screen">
         <div className="login-box">
           <div className="login-logo"><i className="ti ti-layout-kanban"></i> Creative Pulse</div>
-          <div className="login-title">Sign in to your workspace</div>
+          <div className="login-title">{isSignUp ? 'Create your workspace account' : 'Sign in to your workspace'}</div>
+          
+          {loginError && (
+            <div className="mb-4 p-3 bg-red-50 text-red-600 border border-red-100 rounded-lg text-xs font-medium flex items-center gap-2">
+              <i className="ti ti-alert-circle"></i> {loginError}
+            </div>
+          )}
+
           <form onSubmit={handleLogin}>
             <div className="form-group">
               <label className="form-label">Email Address</label>
@@ -236,17 +294,39 @@ export default function App() {
               <input type="password" name="password" className="form-input" placeholder="••••••••" required />
             </div>
             <button type="submit" className="btn btn-primary w-full py-2.5 mt-2" disabled={isLoggingIn}>
-              {isLoggingIn ? 'Signing in...' : 'Sign In'}
+              {isLoggingIn ? (isSignUp ? 'Creating account...' : 'Signing in...') : (isSignUp ? 'Create Account' : 'Sign In')}
             </button>
-            <div className="mt-4 text-[10px] text-slate-400">
-              Demo accounts: sophie@company.com / password123 (Admin)<br/>
-              theo@company.com / password123 (Viewer)
+            <div className="mt-4 text-[11px] text-center">
+              <span className="text-slate-400">{isSignUp ? 'Already have an account?' : 'New here?'} </span>
+              <button 
+                type="button" 
+                className="text-indigo-600 font-medium hover:underline border-none bg-none p-0" 
+                onClick={() => { setIsSignUp(!isSignUp); setLoginError(null); }}
+              >
+                {isSignUp ? 'Sign In' : 'Create Account'}
+              </button>
             </div>
+            {!isSignUp && (
+              <div className="mt-4 text-[10px] text-slate-400 pt-4 border-t border-slate-100">
+                Demo accounts: sophie@company.com / password123 (Admin)<br/>
+                theo@company.com / password123 (Viewer)
+              </div>
+            )}
           </form>
         </div>
       </div>
     );
   }
+
+  if (!state) return (
+    <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50">
+      <div className="text-indigo-600 text-3xl mb-4 animate-bounce"><i className="ti ti-layout-kanban"></i></div>
+      <div className="text-slate-500 font-medium">Preparing your workspace...</div>
+      <div className="mt-2 w-48 h-1 bg-slate-200 rounded-full overflow-hidden">
+        <div className="loading-bar-fill h-full bg-indigo-500 w-1/3 animate-[loading_1.5s_infinite_ease-in-out]"></div>
+      </div>
+    </div>
+  );
 
   const today = new Date().toISOString().split('T')[0];
   const isOverdue = (d: string) => d && d < today;
