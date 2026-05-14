@@ -1,4 +1,5 @@
 import express from "express";
+import dotenv from 'dotenv';
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import fs from "fs";
@@ -9,6 +10,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function startServer() {
+  // Load local .env in development
+  if (process.env.NODE_ENV !== 'production') {
+    dotenv.config();
+  }
   const app = express();
   const PORT = 3000;
 
