@@ -178,7 +178,7 @@ export default function ModalManager() {
 }
 
 function PersonModal({ person, isMe }: { person?: Person, isMe: boolean }) {
-  const { userEmail, userPerms, updateState, setModal, state } = useApp();
+  const { userEmail, userPerms, updateState, setModal, state, showToast } = useApp();
   const [selectedColor, setSelectedColor] = useState(person?.color || COLORS[0]);
 
   return (
@@ -221,11 +221,16 @@ function PersonModal({ person, isMe }: { person?: Person, isMe: boolean }) {
             };
             // If admin chose to create an auth user, call the server endpoint which uses
             // the service role key to create an auth user + profile. This keeps the client simple.
-            if (createAccount && import.meta.env.VITE_ADMIN_SECRET) {
+            if (createAccount) {
               try {
+                const { supabase } = await import('../../lib/supabase');
+                const { data: { session } } = await supabase.auth.getSession();
+                const token = session?.access_token;
+                if (!token) throw new Error('No active session token');
+
                 const res = await fetch('/api/create-user', {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json', 'x-admin-secret': import.meta.env.VITE_ADMIN_SECRET },
+                  headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                   body: JSON.stringify({
                     email: newPerson.email,
                     name: newPerson.name,
@@ -238,8 +243,8 @@ function PersonModal({ person, isMe }: { person?: Person, isMe: boolean }) {
                 const body = await res.json();
                 if (!res.ok) throw body;
                 // Link returned user/profile id to the local person object
-                newPerson.id = body.user?.id || body.user?.data?.id || newPerson.id;
-                newPerson.workspace_id = body.profile?.workspace_id || state?.workspace_id;
+                (newPerson as any).id = body.user?.id || body.user?.data?.id || (newPerson as any).id;
+                (newPerson as any).workspace_id = body.profile?.workspace_id || state?.workspace_id;
                 showToast('Account created and linked.');
               } catch (err: any) {
                 console.error('Create account failed', err);
