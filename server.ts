@@ -3,6 +3,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import fs from "fs";
 import { fileURLToPath } from 'url';
+import { createClient } from '@supabase/supabase-js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11,9 +12,71 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  app.use(express.json());
+
   // API routes FIRST
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // Admin: create user + profile
+  app.post('/api/create-user', async (req, res) => {
+    try {
+      const adminSecret = (req.headers['x-admin-secret'] as string) || req.body?.admin_secret;
+      if (!process.env.ADMIN_SECRET || adminSecret !== process.env.ADMIN_SECRET) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+
+      const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+      const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+        return res.status(500).json({ error: 'Server missing Supabase service role configuration' });
+      }
+
+      const { email, password, name, workspace_id, permissions = 'viewer', role = 'Team Member', color } = req.body;
+      if (!email) return res.status(400).json({ error: 'email required' });
+
+      const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+      const tempPassword = password || (Math.random().toString(36).slice(-10) + 'aA1!');
+      const createRes: any = await supabaseAdmin.auth.admin.createUser({
+        email,
+        password: tempPassword,
+        user_metadata: { name }
+      });
+
+      if (createRes.error) {
+        return res.status(400).json({ error: createRes.error });
+      }
+
+      const createdUser = createRes.data?.user || createRes.user || createRes;
+      const userId = createdUser?.id;
+      if (!userId) {
+        return res.status(500).json({ error: 'Failed to create user' });
+      }
+
+      const initials = (name || email).substring(0, 2).toUpperCase();
+      const profile = {
+        id: userId,
+        workspace_id: workspace_id || null,
+        initials,
+        name: name || email.split('@')[0],
+        email,
+        role,
+        permissions,
+        color: color || null
+      };
+
+      const { error: profileErr } = await supabaseAdmin.from('profiles').insert(profile);
+      if (profileErr) {
+        return res.status(500).json({ error: profileErr });
+      }
+
+      return res.json({ user: createdUser, profile });
+    } catch (err: any) {
+      console.error('create-user error', err);
+      return res.status(500).json({ error: err?.message || String(err) });
+    }
   });
 
   // Vite middleware for development
