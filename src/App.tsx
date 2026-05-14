@@ -743,7 +743,7 @@ export default function App() {
   const navTitles: any = { dashboard: 'Dashboard', kanban: 'Kanban Board', projects: 'Projects', tasks: 'Tasks', people: 'Team', completed: 'Archive' };
   const navSubs: any = { dashboard: 'Overview of all projects and tasks', kanban: 'Drag tasks across stages', projects: 'Active business projects', tasks: 'Track and manage tasks', people: 'Team members and assignments', completed: 'Completed and archived projects' };
 
-  const archiveProject = (projectName: string) => {
+  const archiveProject = async (projectName: string) => {
     const projectToArchive = state.projects.find(p => p.name === projectName);
     if (!projectToArchive) return;
 
@@ -753,6 +753,13 @@ export default function App() {
       projects: prev.projects.map(p => p.name === projectName ? updatedProject : p),
       tasks: prev.tasks.map(t => t.project === projectName ? { ...t, status: 'done' as any } : t)
     }), { type: 'project', data: updatedProject });
+
+    // Persist tasks completion to Supabase
+    try {
+      await supabase.from('tasks').update({ status: 'done' }).eq('project', projectName);
+    } catch (err) {
+      console.error('Archive tasks error:', err);
+    }
     
     setFilterProject(null);
     setView('projects');
