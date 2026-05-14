@@ -34,7 +34,7 @@ export default function App() {
   const [view, setView] = useState(localStorage.getItem('active_view') || 'dashboard');
   const [taskTab, setTaskTab] = useState('all');
   const [filterProject, setFilterProject] = useState<string | null>(localStorage.getItem('filter_project'));
-  const [userEmail, setUserEmail] = useState<string | null>(localStorage.getItem('user_email'));
+  const [userEmail, setUserEmail] = useState<string | null>(localStorage.getItem('user_email')?.toLowerCase() || null);
   const [modal, setModal] = useState<{ type: string, data?: any } | null>(null);
   const [saveStatus, setSaveStatus] = useState('Saved');
   const [toasts, setToasts] = useState<{ id: number, msg: string }[]>([]);
@@ -75,31 +75,17 @@ export default function App() {
       console.log('Auth event:', event, 'User:', session?.user?.email);
       
       if (session?.user) {
-        const email = session.user.email;
+        const email = session.user.email?.toLowerCase();
         if (!email) return;
 
-        // 1. Try to fetch profile by email
-        const { data: profileByEmail } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('email', email)
-          .maybeSingle();
-
-        if (profileByEmail) {
-          console.log('Found profile by email', email);
+        // Ensure state email matches session email
+        if (userEmail !== email) {
           setUserEmail(email);
           localStorage.setItem('user_email', email);
-          
-          if (profileByEmail.id !== session.user.id) {
-            console.log('Linking UID to existing profile');
-            await supabase.from('profiles').update({ id: session.user.id }).eq('email', email);
-          }
-          setRefreshTrigger(prev => prev + 1);
-          return;
         }
 
-        // 2. Try to fetch profile by ID (Google user)
-        const { data: profileById } = await supabase
+        // 1. Try to fetch profile directly by ID
+        const { data: profileById, error: idErr } = await supabase
           .from('profiles')
           .select('*')
           .eq('id', session.user.id)
@@ -107,8 +93,24 @@ export default function App() {
 
         if (profileById) {
           console.log('Found profile by ID', session.user.id);
-          setUserEmail(email);
-          localStorage.setItem('user_email', email);
+          if (profileById.email.toLowerCase() !== email) {
+             console.log('Updating profile email to match session');
+             await supabase.from('profiles').update({ email }).eq('id', session.user.id);
+          }
+          setRefreshTrigger(prev => prev + 1);
+          return;
+        }
+
+        // 2. Try to fetch profile by email (case-insensitive) if ID search failed
+        const { data: profileByEmail } = await supabase
+          .from('profiles')
+          .select('*')
+          .ilike('email', email)
+          .maybeSingle();
+
+        if (profileByEmail) {
+          console.log('Found profile by email', email, 'linking UID');
+          await supabase.from('profiles').update({ id: session.user.id }).eq('email', profileByEmail.email);
           setRefreshTrigger(prev => prev + 1);
           return;
         }
@@ -127,22 +129,24 @@ export default function App() {
         }
 
         if (ws) {
+          console.log('[Auth] Workspace ready, creating profile...');
           const initials = email.substring(0, 2).toUpperCase();
           const { error: profErr } = await supabase.from('profiles').insert({
             id: session.user.id, 
             workspace_id: ws.id, 
             initials, 
             name: email.split('@')[0], 
-            email, 
+            email: email.toLowerCase(), 
             role: 'Workspace Owner', 
             permissions: 'admin', 
             color: COLORS[0]
           });
           
           if (profErr) {
-            console.error('Prof Error:', profErr);
-            setFetchError(`Profile creation failed: ${profErr.message}`);
+            console.error('[Auth] Profile creation error:', profErr);
+            setFetchError(`Welcome! Your account is created, but we had trouble setting up your profile: ${profErr.message}. Please try refreshing.`);
           } else {
+            console.log('[Auth] Profile created successfully');
             setUserEmail(email);
             localStorage.setItem('user_email', email);
             setRefreshTrigger(prev => prev + 1);
@@ -159,50 +163,57 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let retryTimeout: NodeJS.Timeout;
     const fetchData = async (retries = 3) => {
       if (!userEmail) {
-        console.log('No user email yet, skipping fetch');
+        console.log('[Fetch] No userEmail, waiting...');
         return;
       }
       
       try {
         setFetchError(null);
-        console.log('Fetching data for', userEmail, `(retries left: ${retries})`);
+        console.log(`[Fetch] Starting sync for ${userEmail}. Attempt: ${4 - retries}`);
         
+        // 1. Get profile and workspace
+        console.log('[Fetch] Querying profile...');
         const { data: profile, error: pErr } = await supabase
           .from('profiles')
           .select('id, workspace_id')
-          .eq('email', userEmail)
+          .ilike('email', userEmail)
           .maybeSingle();
         
         if (pErr) {
-          console.error('Profile fetch error:', pErr);
-          throw new Error(`Connection error: ${pErr.message}. Check your Supabase URL and Key.`);
+          console.error('[Fetch] Profile Query Error:', pErr);
+          throw new Error(`Connection Error: ${pErr.message}. Ensure your database is accessible.`);
         }
 
         if (!profile) {
           if (retries > 0) {
-            console.log(`Profile not found for ${userEmail}, retrying in 1.5s...`);
-            setTimeout(() => fetchData(retries - 1), 1500);
+            console.log(`[Fetch] Profile not found for ${userEmail}. It might still be creating. Retrying in 2.5s...`);
+            retryTimeout = setTimeout(() => fetchData(retries - 1), 2500);
           } else {
-            console.error('Profile still not found after retries for', userEmail);
-            setFetchError(`Profile not found for ${userEmail}. Make sure you have invited this user or created an account.`);
+            console.error('[Fetch] Max retries reached. Profile missing.');
+            setFetchError(`We couldn't find a workspace profile for ${userEmail.toLowerCase()}. If you just joined, try logging out and back in to re-trigger initialization.`);
           }
           return;
         }
 
         const workspace_id = profile.workspace_id;
-        console.log('Found workspace:', workspace_id);
+        console.log('[Fetch] Found workspace_id:', workspace_id);
 
+        // 2. Load all workspace data
+        console.log('[Fetch] Loading collections (projects, tasks, people)...');
         const [pRes, tRes, uRes] = await Promise.all([
           supabase.from('projects').select('*').eq('workspace_id', workspace_id),
           supabase.from('tasks').select('*').eq('workspace_id', workspace_id),
           supabase.from('profiles').select('*').eq('workspace_id', workspace_id)
         ]);
 
-        if (pRes.error) throw pRes.error;
-        if (tRes.error) throw tRes.error;
-        if (uRes.error) throw uRes.error;
+        if (pRes.error) { console.error('[Fetch] Projects Error:', pRes.error); throw pRes.error; }
+        if (tRes.error) { console.error('[Fetch] Tasks Error:', tRes.error); throw tRes.error; }
+        if (uRes.error) { console.error('[Fetch] Profiles Error:', uRes.error); throw uRes.error; }
+
+        console.log(`[Fetch] Success! Loaded ${pRes.data?.length} projects, ${tRes.data?.length} tasks.`);
 
         setState({
           workspace_id,
@@ -214,13 +225,13 @@ export default function App() {
           people: (uRes.data || []) as Person[]
         });
         setFetchError(null);
-        console.log('State initialized successfully');
       } catch (err: any) {
-        console.error('FetchData Final Error:', err);
-        setFetchError(err.message || 'Failed to load workspace data. Ensure your Supabase tables exist.');
+        console.error('[Fetch] Fatal Error:', err);
+        setFetchError(err.message || 'Synchronisation failed. Please check your network connection.');
       }
     };
     fetchData();
+    return () => clearTimeout(retryTimeout);
   }, [userEmail, refreshTrigger]);
 
   const saveData = useCallback(async (newState: AppState, updatedItem?: { type: 'project' | 'task' | 'person', data: any }) => {
