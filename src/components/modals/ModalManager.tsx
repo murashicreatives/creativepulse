@@ -389,7 +389,7 @@ function TaskDetailModal({ task }: { task: Task }) {
       tasks: prev.tasks.map(t => t.id === task.id ? updatedTask : t)
     }), { type: 'task', data: updatedTask });
     setModal({ type: 'task-detail', data: updatedTask });
-  };
+                const res = await fetch('/api/create-user', {
 
   return (
     <div className="modal-overlay" onClick={() => setModal(null)}>
