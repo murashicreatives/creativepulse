@@ -186,7 +186,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (ws) {
             console.log('[Sync] Creating profile...');
             const initials = userEmail.substring(0, 2).toUpperCase();
-            const { error: profErr } = await sbQuery(() => supabase.from('profiles').insert({
+            const { error: profErr } = await sbQuery(() => supabase.from('profiles').upsert({
               id: session.user.id,
               workspace_id: ws.id,
               initials,
