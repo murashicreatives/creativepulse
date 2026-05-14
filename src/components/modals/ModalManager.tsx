@@ -188,10 +188,11 @@ function PersonModal({ person, isMe }: { person?: Person, isMe: boolean }) {
           {person ? (isMe ? 'Edit your profile' : 'Edit member') : 'Add member'} 
           <button className="modal-close" onClick={() => setModal(null)}><i className="ti ti-x"></i></button>
         </div>
-        <form onSubmit={e => {
+        <form onSubmit={async e => {
           e.preventDefault();
           const f = e.target as any;
           const initials = f['f-uinitials'].value.toUpperCase();
+          const createAccount = !!f['f-create-account']?.checked;
           
           if (person) {
             const updatedPerson = {
@@ -218,6 +219,34 @@ function PersonModal({ person, isMe }: { person?: Person, isMe: boolean }) {
               role: f['f-urole'].value || 'Team Member',
               color: selectedColor
             };
+            // If admin chose to create an auth user, call the server endpoint which uses
+            // the service role key to create an auth user + profile. This keeps the client simple.
+            if (createAccount && import.meta.env.VITE_ADMIN_SECRET) {
+              try {
+                const res = await fetch('/api/create-user', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'x-admin-secret': import.meta.env.VITE_ADMIN_SECRET },
+                  body: JSON.stringify({
+                    email: newPerson.email,
+                    name: newPerson.name,
+                    workspace_id: state?.workspace_id,
+                    permissions: newPerson.permissions,
+                    role: newPerson.role,
+                    color: newPerson.color
+                  })
+                });
+                const body = await res.json();
+                if (!res.ok) throw body;
+                // Link returned user/profile id to the local person object
+                newPerson.id = body.user?.id || body.user?.data?.id || newPerson.id;
+                newPerson.workspace_id = body.profile?.workspace_id || state?.workspace_id;
+                showToast('Account created and linked.');
+              } catch (err: any) {
+                console.error('Create account failed', err);
+                showToast('Failed to create account via server. Saved locally.');
+              }
+            }
+
             updateState(prev => ({ ...prev, people: [...prev.people, newPerson] }), { type: 'person', data: newPerson });
           }
           setModal(null);
@@ -232,6 +261,15 @@ function PersonModal({ person, isMe }: { person?: Person, isMe: boolean }) {
               <input className="form-input" name="f-uinitials" defaultValue={person?.initials} placeholder="e.g. AB" maxLength={2} required />
             </div>
           </div>
+
+          {(!person && userPerms.manageTeam) && (
+            <div className="form-group mt-2">
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input type="checkbox" name="f-create-account" className="form-checkbox" />
+                <span>Create auth account for this member (admin only)</span>
+              </label>
+            </div>
+          )}
 
           <div className="form-group">
             <label className="form-label">Profile Theme</label>
