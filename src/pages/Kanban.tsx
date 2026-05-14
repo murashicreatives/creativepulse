@@ -28,6 +28,8 @@ export default function Kanban() {
   ];
   
   const tasks = filterProject ? state.tasks.filter(t => t.project === filterProject) : state.tasks;
+  const doneCount = tasks.filter(t => t.status === 'done').length;
+  const progressPercent = tasks.length > 0 ? Math.round((doneCount / tasks.length) * 100) : 0;
 
   const moveTask = (task: Task, status: string) => {
     if (!userPerms.edit) {
@@ -56,6 +58,22 @@ export default function Kanban() {
         </div>
         <button className="btn btn-primary text-[11px] py-1 px-[10px]" onClick={() => setModal({ type: 'task' })}><i className="ti ti-plus"></i> Add task</button>
       </div>
+
+      {filterProject && (
+        <div className="mb-4 mx-1">
+          <div className="flex justify-between items-center mb-1.5">
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Project Progress</span>
+            <span className="text-[12px] font-bold text-blue-600">{progressPercent}%</span>
+          </div>
+          <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-blue-500 transition-all duration-700 ease-out" 
+              style={{ width: `${progressPercent}%` }}
+            ></div>
+          </div>
+        </div>
+      )}
+
       <div className="kanban flex-1">
         {cols.map(col => {
           const ct = tasks.filter(t => t.status === col.id);

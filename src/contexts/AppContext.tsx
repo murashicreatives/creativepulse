@@ -24,6 +24,7 @@ interface AppContextType {
   userPerms: typeof PERMISSIONS.viewer;
   currentUser: Person | undefined;
   saveStatus: string;
+  loadingStatus: string;
   fetchError: string | null;
   refreshTrigger: number;
   isSidebarOpen: boolean;
@@ -47,6 +48,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [userEmail, setUserEmail] = useState<string | null>(localStorage.getItem('user_email')?.toLowerCase() || null);
   const [saveStatus, setSaveStatus] = useState('Saved');
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [loadingStatus, setLoadingStatus] = useState<string>('Initializing...');
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [toasts, setToasts] = useState<{ id: number, msg: string }[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -122,17 +124,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
       
       try {
         setFetchError(null);
+        setLoadingStatus('Connecting to server...');
         console.log(`[Sync] Starting for ${userEmail}. Attempt ${4 - retries}`);
         
         // 1. Get/Verify session first (id check)
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.user) {
           console.log('[Sync] No active session found during fetch.');
+          setLoadingStatus('Session expired. Please log in.');
           return;
         }
 
         // 2. Verify Profile & Workspace (Sequential to avoid race conditions)
-        console.log('[Sync] Verifying profile...');
+        setLoadingStatus('Verifying profile...');
         let { data: profile, error: pErr, status } = await sbQuery<any>(
           () => supabase.from('profiles').select('id, email, workspace_id').eq('id', session.user.id).maybeSingle()
         );
@@ -156,6 +160,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         // 3. Auto-Initialize if missing
         if (!profile) {
+          setLoadingStatus('Setting up new account...');
           console.log('[Sync] New user init: checking workspace...');
           let { data: ws } = await sbQuery<any>(
             () => supabase.from('workspaces').select('*').eq('owner_id', session.user.id).limit(1).maybeSingle()
@@ -203,10 +208,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         // 4. Load remaining data
         const workspace_id = profile.workspace_id;
+        setLoadingStatus('Loading workspace data...');
         console.log('[Sync] Workspace identified. Loading collections...');
         
         // Improved logging for each collection
         const loadCollection = async <T,>(name: string, query: () => Promise<any>) => {
+          setLoadingStatus(`Loading ${name}...`);
           console.log(`[Sync] Loading ${name}...`);
           const res = await sbQuery<T>(query);
           if (res.error) console.error(`[Sync] Error loading ${name}:`, res.error);
@@ -337,7 +344,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   return (
     <AppContext.Provider value={{
-      state, userEmail, userPerms, currentUser, saveStatus, fetchError, refreshTrigger,
+      state, userEmail, userPerms, currentUser, saveStatus, fetchError, refreshTrigger, loadingStatus,
       isSidebarOpen, setIsSidebarOpen, isKanbanExpanded, setIsKanbanExpanded,
       modal, setModal, updateState, handleLogout, showToast, toasts, today, archiveProject
     }}>
