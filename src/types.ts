@@ -34,6 +34,8 @@ export interface Task {
 export type PermissionLevel = 'admin' | 'editor' | 'viewer';
 
 export interface Person {
+  id?: string;
+  workspace_id?: string;
   initials: string;
   name: string;
   role: string;

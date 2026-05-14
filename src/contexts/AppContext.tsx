@@ -294,6 +294,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
           ...updatedItem.data,
           workspace_id
         };
+        // Guard: profiles.id is a NOT NULL FK to auth.users(id) in the schema.
+        // Avoid sending inserts/upsserts without a valid `id` to prevent 23502/23503 errors.
+        if (!personData.id) {
+          console.warn('[Supabase] Skipping DB write for person without id:', personData.email);
+          showToast('Member saved locally. Invite the user or link their auth account to persist to the database.');
+          // Treat as saved locally
+          setSaveStatus('Saved (local)');
+          return;
+        }
         const { error: err } = await supabase.from('profiles').upsert(personData);
         error = err;
       }
