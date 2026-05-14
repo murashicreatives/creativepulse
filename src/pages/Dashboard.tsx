@@ -82,6 +82,8 @@ function ProjectCard({ project }: { project: Project }) {
 
   const pt = state.tasks.filter(t => t.project === project.name);
   const done = pt.filter(t => t.status === 'done').length;
+  const progressPercent = pt.length > 0 ? Math.round((done / pt.length) * 100) : 0;
+  
   const badges: any = { 
     active: 'badge-active Active', 
     review: 'badge-review In Review', 
@@ -97,8 +99,8 @@ function ProjectCard({ project }: { project: Project }) {
         <span className={`project-badge ${bClass}`}>{bText}</span>
       </div>
       <div className="project-desc">{project.desc}</div>
-      <div className="progress-bar"><div className="progress-fill" style={{ width: `${project.progress}%` }}></div></div>
-      <div className="progress-row"><span>{done}/{pt.length} tasks</span><span>{project.progress}%</span></div>
+      <div className="progress-bar"><div className="progress-fill" style={{ width: `${progressPercent}%` }}></div></div>
+      <div className="progress-row"><span>{done}/{pt.length} tasks</span><span>{progressPercent}%</span></div>
       <div className="flex justify-between items-center">
         <div className="avatars">{project.members.map((m: string) => <Avatar key={m} initials={m} />)}</div>
         <span className="text-[10px] text-slate-400">{project.members.length} members</span>

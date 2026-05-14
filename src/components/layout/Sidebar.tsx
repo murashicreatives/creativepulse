@@ -43,16 +43,34 @@ export default function Sidebar() {
           <NavItem icon="archive" label="Archive" to="/archive" />
           
           <div className="sidebar-section">Active Projects</div>
-          {state?.projects.filter(p => p.status !== 'completed').map(p => (
-            <NavLink 
-              key={p.id} 
-              to={`/tasks?project=${encodeURIComponent(p.name)}`}
-              className={({ isActive }) => `nav-item ${isActive ? 'active font-medium' : ''}`}
-              onClick={() => setIsSidebarOpen(false)}
-            >
-              <span className="w-1.5 h-1.5 rounded-full inline-block mr-2" style={{ background: p.color }}></span> {p.name}
-            </NavLink>
-          ))}
+          {state?.projects.filter(p => p.status !== 'completed').map(p => {
+            const pt = state.tasks.filter(t => t.project === p.name);
+            const done = pt.filter(t => t.status === 'done').length;
+            const progress = pt.length > 0 ? Math.round((done / pt.length) * 100) : 0;
+            
+            return (
+              <NavLink 
+                key={p.id} 
+                to={`/tasks?project=${encodeURIComponent(p.name)}`}
+                className={({ isActive }) => `sidebar-project-item ${isActive ? 'active' : ''}`}
+                onClick={() => setIsSidebarOpen(false)}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center truncate">
+                    <span className="w-1.5 h-1.5 rounded-full inline-block mr-2 shrink-0" style={{ background: p.color }}></span>
+                    <span className="truncate">{p.name}</span>
+                  </div>
+                  <span className="text-[9px] font-bold text-slate-400">{progress}%</span>
+                </div>
+                <div className="h-0.5 w-full bg-slate-200/50 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-indigo-400 transition-all duration-500" 
+                    style={{ width: `${progress}%`, backgroundColor: p.color }}
+                  ></div>
+                </div>
+              </NavLink>
+            );
+          })}
         </nav>
         <div className="sidebar-footer">
           <div className="flex items-center gap-2 mb-2 px-2.5">

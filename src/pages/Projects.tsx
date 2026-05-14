@@ -28,6 +28,11 @@ export default function Projects() {
 }
 
 function ProjectItem({ project, onClick }: { project: Project, onClick: () => void }) {
+  const { state } = useApp();
+  const pt = state?.tasks.filter(t => t.project === project.name) || [];
+  const done = pt.filter(t => t.status === 'done').length;
+  const progressPercent = pt.length > 0 ? Math.round((done / pt.length) * 100) : 0;
+
   return (
     <div className="project-card" onClick={onClick}>
       <div className="project-header text-left">
@@ -35,8 +40,8 @@ function ProjectItem({ project, onClick }: { project: Project, onClick: () => vo
         <ProjectBadge status={project.status} />
       </div>
       <div className="project-desc text-left">{project.desc}</div>
-      <div className="progress-bar"><div className="progress-fill" style={{ width: `${project.progress}%` }}></div></div>
-      <div className="progress-row"><span>Progress</span><span>{project.progress}%</span></div>
+      <div className="progress-bar"><div className="progress-fill" style={{ width: `${progressPercent}%` }}></div></div>
+      <div className="progress-row"><span>Progress</span><span>{progressPercent}%</span></div>
       <div className="flex justify-between items-center">
         <div className="avatars">
            {project.members.map((m: string) => (

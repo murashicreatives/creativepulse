@@ -62,13 +62,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const today = new Date().toISOString().split('T')[0];
 
   // Helper for resilient Supabase queries with timeout and retry
-  const sbQuery = async <T,>(promiseFn: () => Promise<any>, timeoutMs = 20000, retries = 1): Promise<{data: T | null, error: any, status: number}> => {
+  const sbQuery = async <T,>(promiseFn: () => Promise<any>, timeoutMs = 45000, retries = 1): Promise<{data: T | null, error: any, status: number}> => {
     const execute = async () => {
       const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error('Request timed out')), timeoutMs)
       );
       try {
-        return await Promise.race([promiseFn(), timeoutPromise]) as any;
+        const response = await Promise.race([promiseFn(), timeoutPromise]) as any;
+        return response;
       } catch (e: any) {
         return { data: null, error: { message: e.message || 'Timeout' }, status: 408 };
       }
@@ -76,14 +77,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     let result = await execute();
     if (result.status === 408 && retries > 0) {
-      console.log(`[Supabase] Timeout. Retrying... (${retries} left)`);
-      // Wait 2s before retry
+      console.log(`[Supabase] Timeout (45s). This often happens if the project is paused or cold. Retrying...`);
       await new Promise(r => setTimeout(r, 2000));
       result = await execute();
     }
     
     if (result.error && result.status === 408) {
-      console.error('[Supabase] Fatal Timeout:', result.error.message);
+      console.error('[Supabase] Fatal Timeout after retries.');
     }
     return result;
   };
@@ -95,95 +95,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const email = session.user.email?.toLowerCase();
         if (!email) return;
 
-        // Sync local state
         if (userEmail !== email) {
-          console.log(`[Auth] Syncing userEmail: ${email}`);
+          console.log(`[Auth] User detected: ${email}`);
           setUserEmail(email);
           localStorage.setItem('user_email', email);
         }
-
-        // Check if profile exists (ID is best)
-        console.log('[Auth] Verifying profile for UID:', session.user.id);
-        const { data: profile, error } = await sbQuery<any>(
-          () => supabase.from('profiles').select('id, email, workspace_id').eq('id', session.user.id).maybeSingle()
-        );
-
-        console.log('[Auth] Profile verify result:', { profile, error });
-
-        if (error) {
-          console.error('[Auth] Profile check failed (stopping init):', error);
-          setFetchError(`Database sync error: ${error.message}. Please check your connection.`);
-          return;
-        }
-
-        if (profile) {
-          console.log('[Auth] Profile verified by ID');
-          if (profile.email?.toLowerCase() !== email) {
-            console.log('[Auth] Updating profile email to match session');
-            await sbQuery(() => supabase.from('profiles').update({ email }).eq('id', session.user.id));
-          }
-          setRefreshTrigger(prev => prev + 1);
-          return;
-        }
-
-        // If not by ID, try by email (legacy or invite case)
-        console.log('[Auth] Profile not found by ID, checking by email...');
-        const { data: profileByEmail } = await sbQuery<any>(
-          () => supabase.from('profiles').select('*').ilike('email', email).maybeSingle()
-        );
-
-        if (profileByEmail) {
-          console.log('[Auth] Profile found by email, linking ID');
-          await sbQuery(() => supabase.from('profiles').update({ id: session.user.id }).eq('email', profileByEmail.email));
-          setRefreshTrigger(prev => prev + 1);
-          return;
-        }
-
-        // New user path: Ensure workspace then profile
-        console.log('[Auth] New user detected. Initializing workspace...');
-        let { data: ws } = await sbQuery<any>(
-          () => supabase.from('workspaces').select('*').eq('owner_id', session.user.id).limit(1).maybeSingle()
-        );
-        
-        if (!ws) {
-          console.log('[Auth] Creating new workspace...');
-          const { data: newWs, error: wsErr } = await sbQuery<any>(
-            () => supabase.from('workspaces').insert({ name: 'My Workspace', owner_id: session.user.id }).select().maybeSingle()
-          );
-          
-          if (wsErr) {
-            console.error('[Auth] Workspace creation failed:', wsErr);
-            setFetchError(`Workspace setup failed: ${wsErr.message}`);
-            return;
-          }
-          ws = newWs;
-        }
-
-        if (ws) {
-          console.log('[Auth] Creating profile for workspace:', ws.id);
-          const initials = email.substring(0, 2).toUpperCase();
-          const pData = {
-            id: session.user.id,
-            workspace_id: ws.id,
-            initials,
-            name: email.split('@')[0],
-            email: email,
-            role: 'Workspace Owner',
-            permissions: 'admin',
-            color: COLORS[0]
-          };
-          const { error: profErr } = await sbQuery(() => supabase.from('profiles').insert(pData));
-          
-          if (profErr) {
-            console.error('[Auth] Profile creation error:', profErr);
-            setFetchError(`Account setup failed: ${profErr.message}`);
-          } else {
-            console.log('[Auth] Success! Workspace and profile ready.');
-            setRefreshTrigger(prev => prev + 1);
-          }
-        }
+        // Trigger fetch via refreshTrigger to ensure we start the consolidated logic
+        setRefreshTrigger(prev => prev + 1);
       } else {
-        console.log('[Auth] No session found');
+        console.log('[Auth] No session');
         setUserEmail(null);
         localStorage.removeItem('user_email');
         setState(null);
@@ -193,60 +113,118 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, [userEmail]);
 
-  // Diagnostic Sync Logic
+  // Consolidated Initialisation & Sync Logic
   useEffect(() => {
     let retryTimeout: NodeJS.Timeout;
     
     const fetchData = async (retries = 3) => {
-      if (!userEmail) {
-        console.log('[Fetch] No userEmail. Sync deferred.');
-        return;
-      }
+      if (!userEmail) return;
       
       try {
         setFetchError(null);
-        console.log(`[Fetch] Syncing for ${userEmail}. Remaining attempts: ${retries}`);
+        console.log(`[Sync] Starting for ${userEmail}. Attempt ${4 - retries}`);
         
-        // 1. Get profile and workspace with timeout
-        console.log('[Fetch] Querying profile...');
-        
-        const { data: profile, error: pErr, status } = await sbQuery<any>(
-          () => supabase.from('profiles').select('id, workspace_id').ilike('email', userEmail).maybeSingle()
+        // 1. Get/Verify session first (id check)
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) {
+          console.log('[Sync] No active session found during fetch.');
+          return;
+        }
+
+        // 2. Verify Profile & Workspace (Sequential to avoid race conditions)
+        console.log('[Sync] Verifying profile...');
+        let { data: profile, error: pErr, status } = await sbQuery<any>(
+          () => supabase.from('profiles').select('id, email, workspace_id').eq('id', session.user.id).maybeSingle()
         );
-        
-        console.log('[Fetch] Profile query result:', status, pErr);
+
+        // Fallback to email lookup if not found by ID
+        if (!profile && !pErr) {
+          console.log('[Sync] Profile not found by ID, trying email...');
+          const { data: pByEmail } = await sbQuery<any>(
+            () => supabase.from('profiles').select('*').ilike('email', userEmail).maybeSingle()
+          );
+          if (pByEmail) {
+            console.log('[Sync] Found profile by email, linking UID...');
+            await sbQuery(() => supabase.from('profiles').update({ id: session.user.id }).eq('email', pByEmail.email));
+            profile = pByEmail;
+          }
+        }
 
         if (pErr) {
-          console.error('[Fetch] Profile Query Error:', pErr);
-          throw new Error(`DB Connection Issue (${status}): ${pErr.message}. Check your internet or Supabase status.`);
+          throw new Error(`Profile query timed out. The database project might be starting up from a cold state. Status: ${status}`);
+        }
+
+        // 3. Auto-Initialize if missing
+        if (!profile) {
+          console.log('[Sync] New user init: checking workspace...');
+          let { data: ws } = await sbQuery<any>(
+            () => supabase.from('workspaces').select('*').eq('owner_id', session.user.id).limit(1).maybeSingle()
+          );
+
+          if (!ws) {
+            console.log('[Sync] Creating workspace...');
+            const { data: newWs, error: wsErr } = await sbQuery<any>(
+              () => supabase.from('workspaces').insert({ name: 'My Workspace', owner_id: session.user.id }).select().maybeSingle()
+            );
+            if (wsErr) throw new Error(`Workspace setup failed: ${wsErr.message}`);
+            ws = newWs;
+          }
+
+          if (ws) {
+            console.log('[Sync] Creating profile...');
+            const initials = userEmail.substring(0, 2).toUpperCase();
+            const { error: profErr } = await sbQuery(() => supabase.from('profiles').insert({
+              id: session.user.id,
+              workspace_id: ws.id,
+              initials,
+              name: userEmail.split('@')[0],
+              email: userEmail,
+              role: 'Workspace Owner',
+              permissions: 'admin',
+              color: COLORS[0]
+            }));
+            if (profErr) throw new Error(`Profile setup failed: ${profErr.message}`);
+            
+            // Re-fetch profile after creation
+            const { data: newProf } = await sbQuery<any>(() => supabase.from('profiles').select('*').eq('id', session.user.id).single());
+            profile = newProf;
+          }
         }
 
         if (!profile) {
-          console.log(`[Fetch] No profile found for ${userEmail}. Retries: ${retries}`);
           if (retries > 0) {
+            console.log('[Sync] Profile still not ready, retrying in 3s...');
             retryTimeout = setTimeout(() => fetchData(retries - 1), 3000);
           } else {
-            setFetchError(`Profile not found. If you just signed up, please refresh in a moment.`);
+            setFetchError("We couldn't set up your profile. Please try logging out and back in.");
           }
           return;
         }
 
+        // 4. Load remaining data
         const workspace_id = profile.workspace_id;
-        console.log('[Fetch] Workspace verified:', workspace_id);
+        console.log('[Sync] Workspace identified. Loading collections...');
+        
+        // Improved logging for each collection
+        const loadCollection = async <T,>(name: string, query: () => Promise<any>) => {
+          console.log(`[Sync] Loading ${name}...`);
+          const res = await sbQuery<T>(query);
+          if (res.error) console.error(`[Sync] Error loading ${name}:`, res.error);
+          else console.log(`[Sync] Loaded ${name}: ${Array.isArray(res.data) ? res.data.length : 'OK'}`);
+          return res;
+        };
 
-        // 2. Load all workspace data with timeout
-        console.log('[Fetch] Loading collections...');
         const [pRes, tRes, uRes] = await Promise.all([
-          sbQuery<any[]>(() => supabase.from('projects').select('*').eq('workspace_id', workspace_id)),
-          sbQuery<any[]>(() => supabase.from('tasks').select('*').eq('workspace_id', workspace_id)),
-          sbQuery<any[]>(() => supabase.from('profiles').select('*').eq('workspace_id', workspace_id))
+          loadCollection<any[]>('projects', () => supabase.from('projects').select('*').eq('workspace_id', workspace_id)),
+          loadCollection<any[]>('tasks', () => supabase.from('tasks').select('*').eq('workspace_id', workspace_id)),
+          loadCollection<any[]>('profiles', () => supabase.from('profiles').select('*').eq('workspace_id', workspace_id))
         ]);
 
-        if (pRes.error) throw pRes.error;
-        if (tRes.error) throw tRes.error;
-        if (uRes.error) throw uRes.error;
+        if (pRes.error || tRes.error || uRes.error) {
+          throw new Error("One or more data collections failed to load. The database might be busy. Please refresh.");
+        }
 
-        console.log(`[Fetch] Success: Loaded ${pRes.data?.length} projects, ${tRes.data?.length} tasks.`);
+        console.log(`[Sync] All collections loaded successfully.`);
 
         setState({
           workspace_id,
@@ -259,8 +237,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         });
         setFetchError(null);
       } catch (err: any) {
-        console.error('[Fetch] Fatal Error:', err);
-        setFetchError(err.message || 'Synchronisation failed.');
+        console.error('[Sync] Fatal Error:', err);
+        setFetchError(err.message || 'Synchronisation failed due to server timeout.');
       }
     };
     fetchData();
