@@ -210,15 +210,17 @@ function PersonModal({ person, isMe }: { person?: Person, isMe: boolean }) {
               tasks: prev.tasks.map(t => t.assignee === person.initials ? { ...t, assignee: initials } : t)
             }), { type: 'person', data: updatedPerson });
           } else {
-            const newPerson: Person = {
+            const newPerson: Person & { id: string; workspace_id?: string } = {
+              id: crypto.randomUUID(),
               initials,
               name: f['f-uname'].value,
               email: f['f-uemail'].value,
               permissions: f['f-uperms'].value as any,
               role: f['f-urole'].value || 'Team Member',
-              color: selectedColor
+              color: selectedColor,
+              workspace_id: state?.workspace_id
             };
-            updateState(prev => ({ ...prev, people: [...prev.people, newPerson] }), { type: 'person', data: { ...newPerson, workspace_id: state?.workspace_id } });
+            updateState(prev => ({ ...prev, people: [...prev.people, newPerson] }), { type: 'person', data: newPerson });
           }
           setModal(null);
         }}>
