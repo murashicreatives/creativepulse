@@ -77,15 +77,50 @@ export default function App() {
           }
         } else if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
           // New Google/OAuth user? Create default workspace
-          const { data: ws, error: wsErr } = await supabase
-            .from('workspaces')
-            .insert({ name: 'My Workspace', owner_id: session.user.id })
-            .select()
-            .single();
+          console.log('No profile found, checking if we need to create one for UID:', session.user.id);
           
-          if (!wsErr && ws) {
+          // Double check if a profile with this email exists (e.g. Google user matches an existing email signup)
+          const { data: existingProfile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('email', email)
+            .maybeSingle();
+
+          if (existingProfile) {
+            // Found profile by email, link the ID and continue
+            await supabase.from('profiles').update({ id: session.user.id }).eq('email', email);
+            setUserEmail(email);
+            localStorage.setItem('user_email', email);
+            localStorage.setItem('user_initials', existingProfile.initials);
+            return;
+          }
+
+          // First, check if a workspace already exists for this owner to avoid duplicates
+          let { data: ws } = await supabase
+            .from('workspaces')
+            .select('*')
+            .eq('owner_id', session.user.id)
+            .limit(1)
+            .maybeSingle();
+
+          if (!ws) {
+            console.log('Creating new workspace for OAuth user');
+            const { data: newWs, error: wsErr } = await supabase
+              .from('workspaces')
+              .insert({ name: 'My Workspace', owner_id: session.user.id })
+              .select()
+              .single();
+            ws = newWs;
+            if (wsErr) {
+              console.error('Workspace creation error:', wsErr);
+              setLoginError('Failed to create workspace. Check RLS policies.');
+              return;
+            }
+          }
+          
+          if (ws) {
             const initials = email.substring(0, 2).toUpperCase();
-            await supabase.from('profiles').insert({
+            const { error: profErr } = await supabase.from('profiles').insert({
               id: session.user.id,
               workspace_id: ws.id,
               initials,
@@ -95,8 +130,15 @@ export default function App() {
               permissions: 'admin',
               color: COLORS[0]
             });
-            setUserEmail(email);
-            localStorage.setItem('user_email', email);
+
+            if (profErr) {
+              console.error('Profile creation error:', profErr);
+              setLoginError('Failed to create profile: ' + profErr.message);
+            } else {
+              setUserEmail(email);
+              localStorage.setItem('user_email', email);
+              localStorage.setItem('user_initials', initials);
+            }
           }
         }
       } else {
