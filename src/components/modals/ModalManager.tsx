@@ -180,6 +180,7 @@ export default function ModalManager() {
 function PersonModal({ person, isMe }: { person?: Person, isMe: boolean }) {
   const { userEmail, userPerms, updateState, setModal, state, showToast } = useApp();
   const [selectedColor, setSelectedColor] = useState(person?.color || COLORS[0]);
+  const [createAccountChecked, setCreateAccountChecked] = useState(false);
 
   return (
     <div className="modal-overlay" onClick={() => setModal(null)}>
@@ -268,9 +269,17 @@ function PersonModal({ person, isMe }: { person?: Person, isMe: boolean }) {
           {(!person && userPerms.manageTeam) && (
             <div className="form-group mt-2">
               <label className="inline-flex items-center gap-2 text-sm">
-                <input type="checkbox" name="f-create-account" className="form-checkbox" />
+                <input type="checkbox" name="f-create-account" className="form-checkbox" onChange={e => setCreateAccountChecked(e.target.checked)} />
                 <span>Create auth account for this member (admin only)</span>
               </label>
+            </div>
+          )}
+
+          {createAccountChecked && (
+            <div className="form-group">
+              <label className="form-label">Set password</label>
+              <input type="password" className="form-input" name="f-upassword" placeholder="Enter a password (optional)" />
+              <div className="text-xs text-slate-400 mt-1">Leave empty to auto-generate a temporary password.</div>
             </div>
           )}
 
