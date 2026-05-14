@@ -290,19 +290,52 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const { error: err } = await supabase.from('tasks').upsert(taskData);
         error = err;
       } else if (updatedItem.type === 'person') {
-        const personData = {
+        let personData = {
           ...updatedItem.data,
           workspace_id
-        };
-        // Guard: profiles.id is a NOT NULL FK to auth.users(id) in the schema.
-        // Avoid sending inserts/upsserts without a valid `id` to prevent 23502/23503 errors.
+        } as any;
+
+        // If person has no id, attempt to create an auth user + profile via server endpoint
         if (!personData.id) {
-          console.warn('[Supabase] Skipping DB write for person without id:', personData.email);
-          showToast('Member saved locally. Invite the user or link their auth account to persist to the database.');
-          // Treat as saved locally
-          setSaveStatus('Saved (local)');
-          return;
+          try {
+            const { data: { session } } = await supabase.auth.getSession();
+            const token = session?.access_token;
+            if (token) {
+              const res = await fetch('/api/create-user', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({
+                  email: personData.email,
+                  name: personData.name,
+                  workspace_id: workspace_id,
+                  permissions: personData.permissions,
+                  role: personData.role
+                })
+              });
+              const body = await res.json();
+              if (res.ok) {
+                personData.id = body.user?.id || body.user?.data?.id;
+                personData.workspace_id = body.profile?.workspace_id || workspace_id;
+              } else {
+                console.warn('[Supabase] create-user failed:', body);
+                showToast('Could not create auth user; saved locally.');
+                setSaveStatus('Saved (local)');
+                return;
+              }
+            } else {
+              console.warn('[Supabase] No session token to create user; saving locally.');
+              showToast('No session token; saved locally.');
+              setSaveStatus('Saved (local)');
+              return;
+            }
+          } catch (err) {
+            console.error('[Supabase] create-user error:', err);
+            showToast('Failed to create auth user; saved locally.');
+            setSaveStatus('Saved (local)');
+            return;
+          }
         }
+
         const { error: err } = await supabase.from('profiles').upsert(personData);
         error = err;
       }
