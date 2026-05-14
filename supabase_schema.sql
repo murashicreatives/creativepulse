@@ -60,31 +60,33 @@ ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 
+-- Indices for performance
+CREATE INDEX IF NOT EXISTS idx_profiles_workspace_id ON profiles(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_profiles_id ON profiles(id);
+CREATE INDEX IF NOT EXISTS idx_projects_workspace_id ON projects(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_workspace_id ON tasks(workspace_id);
+
 -- Workspace Policies
-CREATE POLICY "Allow workspace insertion for all" ON workspaces 
+CREATE POLICY "Allow workspace insertion" ON workspaces 
   FOR INSERT WITH CHECK (true);
 
-CREATE POLICY "Allow workspace view for owner" ON workspaces 
-  FOR SELECT USING (auth.uid() = owner_id);
+CREATE POLICY "Allow workspace view" ON workspaces 
+  FOR SELECT USING (true);
 
-CREATE POLICY "Allow workspace update for owner" ON workspaces 
+CREATE POLICY "Allow workspace update" ON workspaces 
   FOR UPDATE USING (auth.uid() = owner_id);
 
 -- Profile Policies
-CREATE POLICY "Allow profile insertion during signup" ON profiles
+CREATE POLICY "Allow profile insertion" ON profiles
   FOR INSERT WITH CHECK (true);
 
-CREATE POLICY "Allow users to read their own profile by email" ON profiles
-  FOR SELECT USING (email = (auth.jwt() ->> 'email'));
+CREATE POLICY "Allow profile view" ON profiles
+  FOR SELECT USING (true); -- Simple read allowed for workspace members and discovery
 
-CREATE POLICY "Allow workspace members to view other profiles" ON profiles
-  FOR SELECT USING (
-    workspace_id IN (
-      SELECT workspace_id FROM profiles WHERE id = auth.uid()
-    )
-  );
+CREATE POLICY "Allow profile update" ON profiles
+  FOR UPDATE USING (id = auth.uid());
 
--- Project Policies
+-- Project Policies (Restrictive)
 CREATE POLICY "Project Workspace Access" ON projects 
   FOR ALL USING (
     workspace_id IN (
@@ -92,16 +94,10 @@ CREATE POLICY "Project Workspace Access" ON projects
     )
   );
 
--- Task Policies
+-- Task Policies (Restrictive)
 CREATE POLICY "Task Workspace Access" ON tasks 
   FOR ALL USING (
     workspace_id IN (
       SELECT workspace_id FROM profiles WHERE id = auth.uid()
     )
   );
-
--- Indices for performance
-CREATE INDEX IF NOT EXISTS idx_profiles_workspace_id ON profiles(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_profiles_id ON profiles(id);
-CREATE INDEX IF NOT EXISTS idx_projects_workspace_id ON projects(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_tasks_workspace_id ON tasks(workspace_id);
