@@ -5,6 +5,10 @@ import { COLORS } from '../contexts/AppContext';
 export default function Login() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isSignUp, setIsSignUp] = useState(false);
+  const [isJoin, setIsJoin] = useState(false);
+  const [joinKey, setJoinKey] = useState('');
+  const [isJoining, setIsJoining] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -170,6 +174,67 @@ export default function Login() {
             </button>
           </div>
         </form>
+
+        <div className="mt-6">
+          <div className="relative my-4 text-center">
+            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 border-t border-slate-100"></div>
+            <span className="relative bg-white px-2 text-[10px] uppercase font-bold tracking-wider text-slate-400">Or join with access key</span>
+          </div>
+
+          <div className="text-left max-w-md mx-auto">
+            {joinError && <div className="mb-3 p-2 bg-red-50 text-red-600 rounded">{joinError}</div>}
+            <div className="form-group mb-3">
+              <label className="form-label mb-1">Workspace Access Key</label>
+              <input value={joinKey} onChange={e => setJoinKey(e.target.value)} className="form-input" placeholder="Enter workspace access key" />
+            </div>
+            <div className="form-group mb-3">
+              <label className="form-label mb-1">Your Email</label>
+              <input id="join-email" className="form-input" placeholder="you@company.com" />
+            </div>
+            <div className="form-group mb-3">
+              <label className="form-label mb-1">Password (optional)</label>
+              <input id="join-password" type="password" className="form-input" placeholder="Choose a password or leave empty" />
+            </div>
+            <div className="flex gap-2">
+              <button className="btn btn-primary flex-1" onClick={async () => {
+                setJoinError(null);
+                setIsJoining(true);
+                try {
+                  const email = (document.getElementById('join-email') as HTMLInputElement)?.value?.toLowerCase();
+                  const password = (document.getElementById('join-password') as HTMLInputElement)?.value;
+                  if (!joinKey) throw new Error('Access key required');
+                  if (!email) throw new Error('Email required');
+                  const res = await fetch('/api/join-with-key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ access_key: joinKey, email, password })
+                  });
+                  const body = await res.json().catch(() => null);
+                  if (!res.ok) throw body || new Error(`HTTP ${res.status}`);
+
+                  // If server returned a tempPassword, sign the user in automatically
+                  const temp = body?.tempPassword;
+                  if (temp) {
+                    const { error } = await supabase.auth.signInWithPassword({ email, password: temp });
+                    if (error) throw error;
+                  } else if (password) {
+                    // If user provided a password, sign them in with it
+                    const { error } = await supabase.auth.signInWithPassword({ email, password });
+                    if (error) throw error;
+                  }
+
+                  // Success: reload to fetch profile
+                  window.location.reload();
+                } catch (err: any) {
+                  setJoinError(err?.message || String(err));
+                } finally {
+                  setIsJoining(false);
+                }
+              }} disabled={isJoining}>{isJoining ? 'Joining...' : 'Join Workspace'}</button>
+              <button className="btn" onClick={() => { setJoinKey(''); setJoinError(null); }}>{'Clear'}</button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
