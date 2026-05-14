@@ -61,16 +61,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const today = new Date().toISOString().split('T')[0];
 
-  // Helper for resilient Supabase queries with timeout
-  const sbQuery = async <T,>(promise: Promise<any>, timeoutMs = 8000): Promise<{data: T | null, error: any, status: number}> => {
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Request timed out')), timeoutMs)
-    );
-    try {
-      return await Promise.race([promise, timeoutPromise]) as any;
-    } catch (e: any) {
-      return { data: null, error: { message: e.message || 'Timeout' }, status: 408 };
+  // Helper for resilient Supabase queries with timeout and retry
+  const sbQuery = async <T,>(promiseFn: () => Promise<any>, timeoutMs = 20000, retries = 1): Promise<{data: T | null, error: any, status: number}> => {
+    const execute = async () => {
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Request timed out')), timeoutMs)
+      );
+      try {
+        return await Promise.race([promiseFn(), timeoutPromise]) as any;
+      } catch (e: any) {
+        return { data: null, error: { message: e.message || 'Timeout' }, status: 408 };
+      }
+    };
+
+    let result = await execute();
+    if (result.status === 408 && retries > 0) {
+      console.log(`[Supabase] Timeout. Retrying... (${retries} left)`);
+      // Wait 2s before retry
+      await new Promise(r => setTimeout(r, 2000));
+      result = await execute();
     }
+    
+    if (result.error && result.status === 408) {
+      console.error('[Supabase] Fatal Timeout:', result.error.message);
+    }
+    return result;
   };
 
   useEffect(() => {
@@ -90,21 +105,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // Check if profile exists (ID is best)
         console.log('[Auth] Verifying profile for UID:', session.user.id);
         const { data: profile, error } = await sbQuery<any>(
-          supabase.from('profiles').select('id, email, workspace_id').eq('id', session.user.id).maybeSingle()
+          () => supabase.from('profiles').select('id, email, workspace_id').eq('id', session.user.id).maybeSingle()
         );
 
         console.log('[Auth] Profile verify result:', { profile, error });
 
-        if (error && error.message !== 'Request timed out') {
-          console.error('[Auth] Profile check error:', error);
-          // Don't return, try email sync
+        if (error) {
+          console.error('[Auth] Profile check failed (stopping init):', error);
+          setFetchError(`Database sync error: ${error.message}. Please check your connection.`);
+          return;
         }
 
         if (profile) {
           console.log('[Auth] Profile verified by ID');
           if (profile.email?.toLowerCase() !== email) {
             console.log('[Auth] Updating profile email to match session');
-            await sbQuery(supabase.from('profiles').update({ email }).eq('id', session.user.id));
+            await sbQuery(() => supabase.from('profiles').update({ email }).eq('id', session.user.id));
           }
           setRefreshTrigger(prev => prev + 1);
           return;
@@ -113,12 +129,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // If not by ID, try by email (legacy or invite case)
         console.log('[Auth] Profile not found by ID, checking by email...');
         const { data: profileByEmail } = await sbQuery<any>(
-          supabase.from('profiles').select('*').ilike('email', email).maybeSingle()
+          () => supabase.from('profiles').select('*').ilike('email', email).maybeSingle()
         );
 
         if (profileByEmail) {
           console.log('[Auth] Profile found by email, linking ID');
-          await sbQuery(supabase.from('profiles').update({ id: session.user.id }).eq('email', profileByEmail.email));
+          await sbQuery(() => supabase.from('profiles').update({ id: session.user.id }).eq('email', profileByEmail.email));
           setRefreshTrigger(prev => prev + 1);
           return;
         }
@@ -126,13 +142,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // New user path: Ensure workspace then profile
         console.log('[Auth] New user detected. Initializing workspace...');
         let { data: ws } = await sbQuery<any>(
-          supabase.from('workspaces').select('*').eq('owner_id', session.user.id).limit(1).maybeSingle()
+          () => supabase.from('workspaces').select('*').eq('owner_id', session.user.id).limit(1).maybeSingle()
         );
         
         if (!ws) {
           console.log('[Auth] Creating new workspace...');
           const { data: newWs, error: wsErr } = await sbQuery<any>(
-            supabase.from('workspaces').insert({ name: 'My Workspace', owner_id: session.user.id }).select().maybeSingle()
+            () => supabase.from('workspaces').insert({ name: 'My Workspace', owner_id: session.user.id }).select().maybeSingle()
           );
           
           if (wsErr) {
@@ -156,7 +172,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             permissions: 'admin',
             color: COLORS[0]
           };
-          const { error: profErr } = await sbQuery(supabase.from('profiles').insert(pData));
+          const { error: profErr } = await sbQuery(() => supabase.from('profiles').insert(pData));
           
           if (profErr) {
             console.error('[Auth] Profile creation error:', profErr);
@@ -195,7 +211,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         console.log('[Fetch] Querying profile...');
         
         const { data: profile, error: pErr, status } = await sbQuery<any>(
-          supabase.from('profiles').select('id, workspace_id').ilike('email', userEmail).maybeSingle()
+          () => supabase.from('profiles').select('id, workspace_id').ilike('email', userEmail).maybeSingle()
         );
         
         console.log('[Fetch] Profile query result:', status, pErr);
@@ -221,9 +237,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // 2. Load all workspace data with timeout
         console.log('[Fetch] Loading collections...');
         const [pRes, tRes, uRes] = await Promise.all([
-          sbQuery<any[]>(supabase.from('projects').select('*').eq('workspace_id', workspace_id)),
-          sbQuery<any[]>(supabase.from('tasks').select('*').eq('workspace_id', workspace_id)),
-          sbQuery<any[]>(supabase.from('profiles').select('*').eq('workspace_id', workspace_id))
+          sbQuery<any[]>(() => supabase.from('projects').select('*').eq('workspace_id', workspace_id)),
+          sbQuery<any[]>(() => supabase.from('tasks').select('*').eq('workspace_id', workspace_id)),
+          sbQuery<any[]>(() => supabase.from('profiles').select('*').eq('workspace_id', workspace_id))
         ]);
 
         if (pRes.error) throw pRes.error;

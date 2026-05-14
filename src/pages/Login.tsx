@@ -12,7 +12,7 @@ export default function Login() {
     setIsLoggingIn(true);
     setLoginError(null);
     const f = e.target as any;
-    const email = f.email.value;
+    const email = f.email.value.toLowerCase();
     const password = f.password.value;
     const workspaceName = isSignUp ? f.workspaceName.value : null;
 
