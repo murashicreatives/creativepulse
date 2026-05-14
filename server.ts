@@ -25,7 +25,6 @@ async function startServer() {
     app.use(vite.middlewares);
     
     // SPA fallback: Return index.html for any unknown route
-    // This handles the refresh on routes like /dashboard in development
     app.get('*', async (req, res, next) => {
       const url = req.originalUrl;
       try {
@@ -40,7 +39,7 @@ async function startServer() {
   } else {
     // In production, serve the built files
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    app.use(express.static(distPath, { index: false }));
     
     // SPA fallback: return index.html for any unknown route
     app.get('*', (req, res) => {

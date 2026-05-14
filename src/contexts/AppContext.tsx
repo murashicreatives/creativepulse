@@ -169,22 +169,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // 3. Auto-Initialize if missing
         if (!profile) {
           setLoadingStatus('Setting up new account...');
-          console.log('[Sync] New user init: checking workspace...');
-          let { data: ws } = await sbQuery<any>(
+          console.log('[Sync] New user init: checking for existing workspace by ownership...');
+          let { data: ws, error: wsSearchErr } = await sbQuery<any>(
             () => supabase.from('workspaces').select('*').eq('owner_id', session.user.id).limit(1).maybeSingle() as any
           );
 
+          if (wsSearchErr) {
+            console.error('[Sync] Workspace search error:', wsSearchErr);
+          }
+
           if (!ws) {
-            console.log('[Sync] Creating workspace...');
+            console.log('[Sync] Creating new default workspace...');
             const { data: newWs, error: wsErr } = await sbQuery<any>(
-              () => supabase.from('workspaces').insert({ name: 'My Workspace', owner_id: session.user.id }).select().maybeSingle() as any
+              () => supabase.from('workspaces').insert({ 
+                name: 'My Workspace', 
+                owner_id: session.user.id 
+              }).select().maybeSingle() as any
             );
             if (wsErr) throw new Error(`Workspace setup failed: ${wsErr.message}`);
             ws = newWs;
+            console.log('[Sync] Workspace created:', ws?.id);
+          } else {
+            console.log('[Sync] Found existing workspace:', ws.id);
           }
 
           if (ws) {
-            console.log('[Sync] Creating profile...');
+            console.log('[Sync] Ensuring profile exists in workspace...');
             const initials = userEmail.substring(0, 2).toUpperCase();
             const { error: profErr } = await sbQuery(() => supabase.from('profiles').upsert({
               id: session.user.id,
@@ -196,11 +206,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
               permissions: 'admin',
               color: COLORS[0]
             }) as any);
-            if (profErr) throw new Error(`Profile setup failed: ${profErr.message}`);
             
-            // Re-fetch profile after creation
-            const { data: newProf } = await sbQuery<any>(() => supabase.from('profiles').select('*').eq('id', session.user.id).single() as any);
-            profile = newProf;
+            if (profErr) {
+              console.error('[Sync] Profile upsert error:', profErr);
+              throw new Error(`Profile setup failed: ${profErr.message}`);
+            }
+            
+            // Re-fetch profile after creation to ensure we have the correct state
+            const { data: refreshedProf } = await sbQuery<any>(() => supabase.from('profiles').select('*').eq('id', session.user.id).single() as any);
+            profile = refreshedProf;
+            console.log('[Sync] Profile consolidated.');
           }
         }
 
@@ -283,30 +298,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
           color: updatedItem.data.color,
           completed_at: updatedItem.data.completedAt
         };
-        console.log('[Supabase] Upserting project:', projectData);
-        const { error: err } = await supabase.from('projects').upsert(projectData);
+        const { data: upsertData, error: err } = await supabase.from('projects').upsert(projectData).select();
         error = err;
       } else if (updatedItem.type === 'task') {
         const taskData = {
           ...updatedItem.data,
           workspace_id
         };
-        console.log('[Supabase] Upserting task:', taskData);
-        const { error: err } = await supabase.from('tasks').upsert(taskData);
+        const { data: upsertData, error: err } = await supabase.from('tasks').upsert(taskData).select();
         error = err;
       } else if (updatedItem.type === 'person') {
         const personData = {
           ...updatedItem.data,
           workspace_id
         };
-        console.log('[Supabase] Upserting profile:', personData);
-        const { error: err } = await supabase.from('profiles').upsert(personData);
+        const { data: upsertData, error: err } = await supabase.from('profiles').upsert(personData).select();
         error = err;
       }
 
       if (error) {
         console.error(`[Supabase] Save Error (${updatedItem.type}):`, error);
-        showToast(`Save failed: ${error.message || 'Check database schema'}`);
+        showToast(`Sync Failed: ${error.message || 'The server rejected your changes'}`);
         throw error;
       }
       setSaveStatus('Saved');
