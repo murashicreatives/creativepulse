@@ -19,30 +19,47 @@ export default function Sidebar() {
     );
   };
 
-  const NavItem = ({ icon, label, to }: { icon: string, label: string, to: string }) => (
+  const NavItem = ({ icon, label, to, count }: { icon: string, label: string, to: string, count?: number }) => (
     <NavLink 
       to={to} 
       className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
       onClick={() => setIsSidebarOpen(false)}
     >
-      <i className={`ti ti-${icon}`} aria-hidden="true"></i> {label}
+      <div className="flex items-center gap-3 flex-1">
+        <i className={`ti ti-${icon} text-lg`} aria-hidden="true"></i> 
+        <span>{label}</span>
+      </div>
+      {count !== undefined && count > 0 && (
+        <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full">
+          {count}
+        </span>
+      )}
     </NavLink>
   );
+
+  const activeProjectsCount = state?.projects.filter(p => p.status !== 'completed').length || 0;
+  const activeTasksCount = state?.tasks.filter(t => t.status !== 'done').length || 0;
+  const teamCount = state?.people.length || 0;
 
   return (
     <>
       <div className={`sidebar-overlay ${isSidebarOpen ? 'active' : ''}`} onClick={() => setIsSidebarOpen(false)}></div>
       <aside className={`sidebar ${isSidebarOpen ? 'mobile-open' : ''}`}>
-        <div className="sidebar-logo"><i className="ti ti-layout-kanban"></i> Creative Pulse</div>
+        <div className="sidebar-logo">
+          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center mr-1">
+            <i className="ti ti-layout-kanban text-white text-lg"></i>
+          </div>
+          <span>Pulse</span>
+        </div>
         <nav className="sidebar-nav">
           <NavItem icon="home" label="Dashboard" to="/dashboard" />
-          <NavItem icon="layout-columns" label="Kanban" to="/kanban" />
-          <NavItem icon="folder" label="Projects" to="/projects" />
+          <NavItem icon="layout-columns" label="Kanban" to="/kanban" count={activeTasksCount} />
+          <NavItem icon="folder" label="Projects" to="/projects" count={activeProjectsCount} />
           <NavItem icon="checkbox" label="Tasks" to="/tasks" />
-          <NavItem icon="users" label="Team" to="/team" />
+          <NavItem icon="users" label="Team" to="/team" count={teamCount} />
           <NavItem icon="archive" label="Archive" to="/archive" />
           
-          <div className="sidebar-section">Active Projects</div>
+          <div className="sidebar-section mt-4">Live Projects</div>
           {state?.projects.filter(p => p.status !== 'completed').map(p => {
             const pt = state.tasks.filter(t => t.project === p.name);
             const done = pt.filter(t => t.status === 'done').length;

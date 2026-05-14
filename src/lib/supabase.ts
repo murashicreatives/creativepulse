@@ -11,7 +11,7 @@ if (isPlaceholder) {
 } else if (!isValidUrl) {
   console.error('[Supabase] INVALID URL DETECTED:', supabaseUrl, '. It must start with https:// and end with .supabase.co');
 } else {
-  console.log('[Supabase] Initialized. URL Verified.');
+  // Silent init
 }
 
 export const supabase = createClient(

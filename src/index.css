@@ -196,7 +196,8 @@ body{font-family:var(--font-sans);color:var(--color-text-primary);background: #f
 .modal-close{cursor:pointer;color:var(--color-text-tertiary);border:none;background:none;font-size:16px;line-height:1;font-family:var(--font-sans)}
 .form-group{margin-bottom:12px}
 .form-label{font-size:11px;color:var(--color-text-secondary);margin-bottom:4px;display:block}
-.form-input,.form-select,.form-textarea{width:100%;padding:7px 9px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:var(--color-background-primary);color:var(--color-text-primary);font-size:12px;font-family:var(--font-sans)}
+.form-input,.form-select,.form-textarea{width:100%;padding:10px 14px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:var(--color-background-primary);color:var(--color-text-primary);font-size:13px;font-family:var(--font-sans);transition: border-color 0.15s, box-shadow 0.15s;}
+.form-input:focus, .form-select:focus, .form-textarea:focus { outline: none; border-color: #185FA5; box-shadow: 0 0 0 3px rgba(24, 95, 165, 0.1); }
 .form-textarea{resize:vertical;min-height:60px}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .modal-actions{display:flex;gap:6px;justify-content:flex-end;margin-top:16px}
@@ -252,7 +253,7 @@ body{font-family:var(--font-sans);color:var(--color-text-primary);background: #f
 
 /* login */
 .login-screen{display:flex;align-items:center;justify-content:center;height:100vh;background:var(--color-background-tertiary);padding:20px}
-.login-box{background:var(--color-background-primary);border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-lg);padding:30px;width:100%;max-width:340px;box-shadow:0 4px 20px rgba(0,0,0,.05);text-align:center}
-.login-logo{font-size:20px;font-weight:600;margin-bottom:24px;display:flex;align-items:center;justify-content:center;gap:8px}
-.login-logo i{color:#185FA5;font-size:24px}
-.login-title{font-size:15px;color:var(--color-text-secondary);margin-bottom:20px}
+.login-box{background:var(--color-background-primary);border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-lg);padding:40px;width:100%;max-width:380px;box-shadow:0 10px 40px rgba(0,0,0,.04);text-align:center}
+.login-logo{font-size:24px;font-weight:700;margin-bottom:32px;display:flex;align-items:center;justify-content:center;gap:12px;letter-spacing:-0.01em}
+.login-logo i{color:#185FA5;font-size:32px;background:#E6F1FB;width:48px;height:48px;display:flex;align-items:center;justify-content:center;border-radius:12px}
+.login-title{font-size:16px;color:var(--color-text-secondary);margin-bottom:28px;font-weight:500}

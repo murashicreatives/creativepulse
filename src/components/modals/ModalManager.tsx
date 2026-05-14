@@ -67,27 +67,96 @@ export default function ModalManager() {
   }
 
   if (type === 'project') {
+    const project = data as Project | undefined;
+    const [selectedMembers, setSelectedMembers] = useState<string[]>(project?.members || []);
+
+    const toggleMember = (initials: string) => {
+      setSelectedMembers(prev => 
+        prev.includes(initials) 
+          ? prev.filter(m => m !== initials) 
+          : [...prev, initials]
+      );
+    };
+
     return (
-      <ModalWrapper title="New project">
+      <ModalWrapper title={project ? 'Edit project' : 'New project'}>
         <form onSubmit={e => {
           e.preventDefault();
           const f = e.target as any;
-          const newProj: Project = {
-            id: crypto.randomUUID(),
-            name: f['f-pname'].value,
-            desc: f['f-pdesc'].value || 'New project',
-            status: f['f-pstatus'].value as any,
-            progress: 0,
-            members: [],
-            color: '#185FA5'
-          };
-          updateState(prev => ({ ...prev, projects: [...prev.projects, newProj] }), { type: 'project', data: newProj });
+          
+          if (project) {
+            const updatedProj: Project = {
+              ...project,
+              name: f['f-pname'].value,
+              desc: f['f-pdesc'].value,
+              status: f['f-pstatus'].value as any,
+              members: selectedMembers
+            };
+            updateState(prev => ({
+              ...prev,
+              projects: prev.projects.map(p => p.id === project.id ? updatedProj : p)
+            }), { type: 'project', data: updatedProj });
+          } else {
+            const newProj: Project = {
+              id: crypto.randomUUID(),
+              name: f['f-pname'].value,
+              desc: f['f-pdesc'].value || 'New project',
+              status: f['f-pstatus'].value as any,
+              progress: 0,
+              members: selectedMembers,
+              color: '#185FA5'
+            };
+            updateState(prev => ({ ...prev, projects: [...prev.projects, newProj] }), { type: 'project', data: newProj });
+          }
           setModal(null);
         }}>
-          <div className="form-group"><label className="form-label">Project name</label><input className="form-input" name="f-pname" placeholder="Project name" required /></div>
-          <div className="form-group"><label className="form-label">Description</label><textarea className="form-textarea" name="f-pdesc" placeholder="What is this project about?"></textarea></div>
-          <div className="form-group"><label className="form-label">Status</label><select className="form-select" name="f-pstatus"><option value="planning">Planning</option><option value="active">Active</option><option value="review">In Review</option></select></div>
-          <div className="modal-actions"><button type="button" className="btn" onClick={() => setModal(null)}>Cancel</button><button type="submit" className="btn btn-primary">Create</button></div>
+          <div className="form-group">
+            <label className="form-label">Project name</label>
+            <input className="form-input" name="f-pname" defaultValue={project?.name} placeholder="e.g. Website Redesign" required />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Description</label>
+            <textarea className="form-textarea" name="f-pdesc" defaultValue={project?.desc} placeholder="What is this project about?"></textarea>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Status</label>
+            <select className="form-select" name="f-pstatus" defaultValue={project?.status || 'planning'}>
+              <option value="planning">Planning</option>
+              <option value="active">Active</option>
+              <option value="review">In Review</option>
+              <option value="completed">Completed</option>
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Project Team ({selectedMembers.length})</label>
+            <div className="flex flex-wrap gap-2 mt-2">
+              {state?.people.map(p => {
+                const isSelected = selectedMembers.includes(p.initials);
+                return (
+                  <button
+                    key={p.initials}
+                    type="button"
+                    onClick={() => toggleMember(p.initials)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all ${
+                      isSelected 
+                        ? 'bg-indigo-50 border-indigo-200 text-indigo-700' 
+                        : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                    }`}
+                  >
+                    <Avatar initials={p.initials} size="detail" />
+                    <span className="text-xs font-medium">{p.name}</span>
+                    {isSelected && <i className="ti ti-check text-[10px]"></i>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="modal-actions">
+            <button type="button" className="btn" onClick={() => setModal(null)}>Cancel</button>
+            <button type="submit" className="btn btn-primary">{project ? 'Save Changes' : 'Create Project'}</button>
+          </div>
         </form>
       </ModalWrapper>
     );
@@ -207,7 +276,7 @@ function PersonModal({ person, isMe }: { person?: Person, isMe: boolean }) {
           </div>
           <div className="modal-actions">
             {person && userPerms.manageTeam && !isMe && (
-              <button type="button" className="btn mr-auto text-[#A32D2D] hover:bg-red-50" onClick={() => {
+              <button type="button" className="btn mr-auto text-red-600 hover:bg-red-50" onClick={() => {
                 if (confirm(`Are you sure you want to remove ${person.name}?`)) {
                   updateState(prev => ({
                     ...prev,
@@ -215,7 +284,27 @@ function PersonModal({ person, isMe }: { person?: Person, isMe: boolean }) {
                   }));
                   setModal(null);
                 }
-              }}><i className="ti ti-trash"></i> Remove</button>
+              }}><i className="ti ti-trash"></i> Remove Member</button>
+            )}
+            {isMe && (
+              <button type="button" className="btn mr-auto text-red-600 hover:bg-red-50" onClick={async () => {
+                if (confirm('Are you sure you want to delete your profile? This will log you out.')) {
+                  try {
+                    // 1. Remove profile from DB
+                    await updateState(prev => ({
+                      ...prev,
+                      people: prev.people.filter(p => p.email !== person.email)
+                    }));
+                    // 2. Log out
+                    const { supabase } = await import('../../lib/supabase');
+                    await supabase.auth.signOut();
+                    // AppContext should catch this and set userEmail to null, triggering redirect in App.tsx
+                    setModal(null);
+                  } catch (err) {
+                    alert('Failed to delete account. Please try again.');
+                  }
+                }
+              }}><i className="ti ti-trash"></i> Delete My Account</button>
             )}
             <button type="button" className="btn" onClick={() => setModal(null)}>Cancel</button>
             <button type="submit" className="btn btn-primary">{person ? 'Save Changes' : 'Update Profile'}</button>
