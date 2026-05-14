@@ -68,6 +68,21 @@ CREATE INDEX IF NOT EXISTS idx_profiles_id ON profiles(id);
 CREATE INDEX IF NOT EXISTS idx_projects_workspace_id ON projects(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_workspace_id ON tasks(workspace_id);
 
+-- Invites table for admin-created invites
+DROP TABLE IF EXISTS invites CASCADE;
+CREATE TABLE invites (
+  token uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  email text NOT NULL,
+  inviter_id uuid REFERENCES auth.users(id),
+  workspace_id uuid REFERENCES workspaces(id) ON DELETE CASCADE,
+  role text,
+  permissions text CHECK (permissions IN ('admin', 'editor', 'viewer')) DEFAULT 'viewer',
+  created_at timestamp with time zone DEFAULT now(),
+  expires_at timestamp with time zone
+);
+
+CREATE INDEX IF NOT EXISTS idx_invites_workspace_id ON invites(workspace_id);
+
 -- Project Policies (Simplified for troubleshooting)
 CREATE POLICY "Project Access" ON projects 
   FOR ALL USING (true);

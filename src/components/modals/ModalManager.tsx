@@ -227,8 +227,8 @@ function PersonModal({ person, isMe }: { person?: Person, isMe: boolean }) {
                 const { data: { session } } = await supabase.auth.getSession();
                 const token = session?.access_token;
                 if (!token) throw new Error('No active session token');
-
-                const res = await fetch('/api/create-user', {
+                // Instead of creating the user immediately, create an invite and email a signup link
+                const res = await fetch('/api/invite-user', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                   body: JSON.stringify({
@@ -236,16 +236,12 @@ function PersonModal({ person, isMe }: { person?: Person, isMe: boolean }) {
                     name: newPerson.name,
                     workspace_id: state?.workspace_id,
                     permissions: newPerson.permissions,
-                    role: newPerson.role,
-                    color: newPerson.color
+                    role: newPerson.role
                   })
                 });
                 const body = await res.json();
                 if (!res.ok) throw body;
-                // Link returned user/profile id to the local person object
-                (newPerson as any).id = body.user?.id || body.user?.data?.id || (newPerson as any).id;
-                (newPerson as any).workspace_id = body.profile?.workspace_id || state?.workspace_id;
-                showToast('Account created and linked.');
+                showToast('Invitation sent. The user will receive a signup link via email.');
               } catch (err: any) {
                 console.error('Create account failed', err);
                 showToast('Failed to create account via server. Saved locally.');
