@@ -120,7 +120,7 @@ export default function App() {
           const { data: newWs, error: wsErr } = await supabase.from('workspaces').insert({ name: 'My Workspace', owner_id: session.user.id }).select().single();
           if (wsErr) {
             console.error('WS Error:', wsErr);
-            setLoginError('Initialization failed.');
+            setFetchError(`Workspace initialization failed: ${wsErr.message}`);
             return;
           }
           ws = newWs;
@@ -141,6 +141,7 @@ export default function App() {
           
           if (profErr) {
             console.error('Prof Error:', profErr);
+            setFetchError(`Profile creation failed: ${profErr.message}`);
           } else {
             setUserEmail(email);
             localStorage.setItem('user_email', email);
@@ -159,25 +160,39 @@ export default function App() {
 
   useEffect(() => {
     const fetchData = async (retries = 3) => {
-      if (!userEmail) return;
+      if (!userEmail) {
+        console.log('No user email yet, skipping fetch');
+        return;
+      }
       
       try {
-        console.log('Fetching data for', userEmail);
-        const { data: profile, error: pErr } = await supabase.from('profiles').select('workspace_id').eq('email', userEmail).maybeSingle();
+        setFetchError(null);
+        console.log('Fetching data for', userEmail, `(retries left: ${retries})`);
         
-        if (pErr) throw pErr;
+        const { data: profile, error: pErr } = await supabase
+          .from('profiles')
+          .select('id, workspace_id')
+          .eq('email', userEmail)
+          .maybeSingle();
+        
+        if (pErr) {
+          console.error('Profile fetch error:', pErr);
+          throw new Error(`Connection error: ${pErr.message}. Check your Supabase URL and Key.`);
+        }
 
         if (!profile) {
           if (retries > 0) {
-            console.log(`Profile not found, retrying in 1s... (${retries} left)`);
-            setTimeout(() => fetchData(retries - 1), 1000);
+            console.log(`Profile not found for ${userEmail}, retrying in 1.5s...`);
+            setTimeout(() => fetchData(retries - 1), 1500);
           } else {
-            setFetchError('Profile not found. Please try logging out and back in.');
+            console.error('Profile still not found after retries for', userEmail);
+            setFetchError(`Profile not found for ${userEmail}. Make sure you have invited this user or created an account.`);
           }
           return;
         }
 
         const workspace_id = profile.workspace_id;
+        console.log('Found workspace:', workspace_id);
 
         const [pRes, tRes, uRes] = await Promise.all([
           supabase.from('projects').select('*').eq('workspace_id', workspace_id),
@@ -185,7 +200,9 @@ export default function App() {
           supabase.from('profiles').select('*').eq('workspace_id', workspace_id)
         ]);
 
-        if (pRes.error || tRes.error || uRes.error) throw new Error('Failed to load workspace data');
+        if (pRes.error) throw pRes.error;
+        if (tRes.error) throw tRes.error;
+        if (uRes.error) throw uRes.error;
 
         setState({
           workspace_id,
@@ -197,9 +214,10 @@ export default function App() {
           people: (uRes.data || []) as Person[]
         });
         setFetchError(null);
+        console.log('State initialized successfully');
       } catch (err: any) {
-        console.error(err);
-        setFetchError(err.message || 'Connection failed');
+        console.error('FetchData Final Error:', err);
+        setFetchError(err.message || 'Failed to load workspace data. Ensure your Supabase tables exist.');
       }
     };
     fetchData();
@@ -484,17 +502,38 @@ export default function App() {
   }
 
   if (!state) return (
-    <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50">
-      <div className="text-indigo-600 text-3xl mb-4 animate-bounce"><i className="ti ti-layout-kanban"></i></div>
-      <div className="text-slate-500 font-medium">Preparing your workspace...</div>
+    <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50 p-6 text-center">
+      <div className="text-indigo-600 text-5xl mb-6 animate-bounce"><i className="ti ti-layout-kanban"></i></div>
+      <div className="text-slate-600 text-xl font-semibold mb-2">Preparing your workspace...</div>
+      <div className="text-slate-400 text-sm mb-8 max-w-sm">We're connecting to your database and loading your creative pulse dashboard.</div>
+      
       {fetchError ? (
-        <div className="mt-4 flex flex-col items-center">
-          <div className="text-red-500 text-xs mb-3">{fetchError}</div>
-          <button className="btn text-xs" onClick={() => handleLogout()}>Log out and try again</button>
+        <div className="mt-4 flex flex-col items-center max-w-md animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="bg-red-50 border border-red-100 rounded-xl p-6 mb-6">
+            <div className="text-red-600 font-bold flex items-center justify-center gap-2 mb-2">
+              <i className="ti ti-alert-triangle-filled"></i> Connection Issue
+            </div>
+            <div className="text-red-500 text-sm">{fetchError}</div>
+          </div>
+          <div className="flex gap-3">
+             <button className="btn px-6" onClick={() => window.location.reload()}>Try Again</button>
+             <button className="btn bg-white border-slate-200" onClick={() => handleLogout()}>Log out</button>
+          </div>
+          <div className="mt-8 text-left bg-slate-100 p-4 rounded-lg text-[11px] text-slate-500 font-mono">
+             <strong>Checklist for Supabase:</strong>
+             <ul className="list-disc ml-4 mt-2 space-y-1">
+               <li>Ensure your ENV variables are set correctly.</li>
+               <li>Verify tables (profiles, projects, tasks, workspaces) exist.</li>
+               <li>Check if RLS policies allow selection.</li>
+             </ul>
+          </div>
         </div>
       ) : (
-        <div className="mt-2 w-48 h-1 bg-slate-200 rounded-full overflow-hidden">
-          <div className="loading-bar-fill h-full bg-indigo-500 w-1/3 animate-[loading_1.5s_infinite_ease-in-out]"></div>
+        <div className="flex flex-col items-center">
+          <div className="w-64 h-2 bg-slate-200 rounded-full overflow-hidden shadow-inner">
+            <div className="loading-bar-fill h-full bg-indigo-500 w-1/3 animate-[loading_1.5s_infinite_ease-in-out]"></div>
+          </div>
+          <div className="mt-4 text-slate-400 text-xs italic">Fetching data for {userEmail}...</div>
         </div>
       )}
     </div>
