@@ -16,32 +16,12 @@ const COLORS = [
   { bg: '#FAECE7', txt: '#712B13' }
 ];
 
-const DEFAULT_DATA: AppState = {
-  projects: [
-    { id: 1, name: 'Website Redesign', desc: 'Full redesign of the company website with new brand identity.', status: 'active', progress: 65, members: ['SA', 'JK', 'MR'], color: '#185FA5' },
-    { id: 2, name: 'Mobile App v2', desc: 'Second version of the mobile app with performance improvements.', status: 'active', progress: 32, members: ['JK', 'TN', 'SA'], color: '#1D9E75' },
-    { id: 3, name: 'Data Migration', desc: 'Migrate legacy database to new cloud infrastructure.', status: 'review', progress: 88, members: ['MR', 'TN'], color: '#EF9F27' },
-    { id: 4, name: 'Q3 Marketing', desc: 'Q3 campaign planning and execution for product launch.', status: 'planning', progress: 10, members: ['SA', 'MR'], color: '#9977DD' },
-  ],
-  tasks: [
-    { id: 1, name: 'Design new homepage mockup', project: 'Website Redesign', assignee: 'SA', due: '2026-05-15', priority: 'high', status: 'todo', comments: [] },
-    { id: 2, name: 'Set up CI/CD pipeline', project: 'Mobile App v2', assignee: 'JK', due: '2026-05-18', priority: 'high', status: 'todo', comments: [] },
-    { id: 3, name: 'Audit current database schema', project: 'Data Migration', assignee: 'MR', due: '2026-05-10', priority: 'med', status: 'done', comments: [{ author: 'MR', text: 'Schema audit complete, 3 issues found.', time: 'May 10' }] },
-    { id: 4, name: 'Write API documentation', project: 'Mobile App v2', assignee: 'TN', due: '2026-05-20', priority: 'low', status: 'todo', comments: [] },
-    { id: 5, name: 'Create brand style guide', project: 'Website Redesign', assignee: 'MR', due: '2026-05-14', priority: 'med', status: 'inprogress', comments: [] },
-    { id: 6, name: 'Set up test environments', project: 'Data Migration', assignee: 'TN', due: '2026-05-11', priority: 'high', status: 'done', comments: [{ author: 'TN', text: 'All environments ready.', time: 'May 11' }] },
-    { id: 7, name: 'Implement push notifications', project: 'Mobile App v2', assignee: 'SA', due: '2026-05-22', priority: 'med', status: 'inprogress', comments: [] },
-    { id: 8, name: 'Draft Q3 campaign brief', project: 'Q3 Marketing', assignee: 'SA', due: '2026-05-25', priority: 'low', status: 'todo', comments: [] },
-    { id: 9, name: 'Finalize migration runbook', project: 'Data Migration', assignee: 'MR', due: '2026-05-13', priority: 'high', status: 'todo', comments: [] },
-    { id: 10, name: 'Fix navigation responsiveness', project: 'Website Redesign', assignee: 'JK', due: '2026-05-16', priority: 'med', status: 'done', comments: [] },
-  ],
-  people: [
-    { initials: 'SA', name: 'Sophie Amara', role: 'Product Designer', email: 'sophie@company.com', password: 'password123', permissions: 'admin', color: COLORS[0] },
-    { initials: 'JK', name: 'James Kim', role: 'Frontend Developer', email: 'james@company.com', password: 'password123', permissions: 'editor', color: COLORS[1] },
-    { initials: 'MR', name: 'Maya Rodriguez', role: 'Backend Engineer', email: 'maya@company.com', password: 'password123', permissions: 'editor', color: COLORS[2] },
-    { initials: 'TN', name: 'Theo Nakamura', role: 'DevOps Engineer', email: 'theo@company.com', password: 'password123', permissions: 'viewer', color: COLORS[3] },
-  ]
-};
+const DEFAULT_DATA = (workspaceId: string): AppState => ({
+  workspace_id: workspaceId,
+  projects: [],
+  tasks: [],
+  people: []
+});
 
 const PERMISSIONS = {
   admin: { create: true, edit: true, delete: true, manageTeam: true },
@@ -54,7 +34,7 @@ export default function App() {
   const [view, setView] = useState('dashboard');
   const [taskTab, setTaskTab] = useState('all');
   const [filterProject, setFilterProject] = useState<string | null>(null);
-  const [loggedInInitials, setLoggedInInitials] = useState<string | null>(localStorage.getItem('user_initials'));
+  const [userEmail, setUserEmail] = useState<string | null>(localStorage.getItem('user_email'));
   const [modal, setModal] = useState<{ type: string, data?: any } | null>(null);
   const [saveStatus, setSaveStatus] = useState('Saved');
   const [toasts, setToasts] = useState<{ id: number, msg: string }[]>([]);
@@ -64,7 +44,7 @@ export default function App() {
   const [isSignUp, setIsSignUp] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
-  const currentUser = state?.people.find(p => p.initials === loggedInInitials);
+  const currentUser = state?.people.find(p => p.email === userEmail);
   const userPerms = currentUser ? (PERMISSIONS[currentUser.permissions] || PERMISSIONS.viewer) : PERMISSIONS.viewer;
 
   useEffect(() => {
@@ -80,7 +60,7 @@ export default function App() {
         const email = session.user.email;
         if (!email) return;
 
-        // Try to fetch existing profile
+        // Fetch profile with workspace_id
         const { data: profile } = await supabase
           .from('profiles')
           .select('*')
@@ -88,69 +68,58 @@ export default function App() {
           .single();
 
         if (profile) {
-          setLoggedInInitials(profile.initials);
-          localStorage.setItem('user_initials', profile.initials);
-        } else {
-          // Auto-create profile if missing
-          const initials = email.substring(0, 2).toUpperCase();
-          const newProfile = {
-            initials,
-            name: email.split('@')[0],
-            email,
-            role: 'Team Member',
-            permissions: 'editor',
-            color: COLORS[Math.floor(Math.random() * COLORS.length)]
-          };
+          setUserEmail(email);
+          localStorage.setItem('user_email', email);
           
-          const { error } = await supabase.from('profiles').insert(newProfile);
-          if (!error) {
-            setLoggedInInitials(initials);
-            localStorage.setItem('user_initials', initials);
-            // Refresh local state if initialized
-            if (state) {
-              setState(prev => prev ? ({ ...prev, people: [...prev.people, newProfile] }) : null);
-            }
+          // Link ID if missing (staff login case)
+          if (!profile.id) {
+            await supabase.from('profiles').update({ id: session.user.id }).eq('email', email);
           }
+        } else if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
+          // No profile found yet, might be waiting for signup logic to finish
+          setUserEmail(null);
         }
       } else {
-        setLoggedInInitials(null);
-        localStorage.removeItem('user_initials');
+        setUserEmail(null);
+        localStorage.removeItem('user_email');
       }
     });
 
     return () => subscription.unsubscribe();
-  }, [state]);
+  }, []);
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!loggedInInitials) return;
+      if (!userEmail) return;
       
       try {
-        const { data: projects, error: pError } = await supabase.from('projects').select('*');
-        const { data: tasks, error: tError } = await supabase.from('tasks').select('*');
-        const { data: people, error: uError } = await supabase.from('profiles').select('*');
+        const { data: profile } = await supabase.from('profiles').select('workspace_id').eq('email', userEmail).single();
+        if (!profile) return;
+        const workspace_id = profile.workspace_id;
 
-        if (pError || tError || uError) throw new Error('Supabase fetch failed');
+        const [pRes, tRes, uRes] = await Promise.all([
+          supabase.from('projects').select('*').eq('workspace_id', workspace_id),
+          supabase.from('tasks').select('*').eq('workspace_id', workspace_id),
+          supabase.from('profiles').select('*').eq('workspace_id', workspace_id)
+        ]);
 
-        if (projects && (projects.length > 0 || tasks.length > 0)) {
-          setState({
-            projects: projects.map(p => ({
-              ...p,
-              completedAt: p.completed_at
-            })) as Project[],
-            tasks: tasks as Task[],
-            people: people as Person[]
-          });
-        } else {
-          setState(DEFAULT_DATA);
-        }
+        if (pRes.error || tRes.error || uRes.error) throw new Error('Supabase fetch failed');
+
+        setState({
+          workspace_id,
+          projects: (pRes.data || []).map(p => ({
+            ...p,
+            completedAt: p.completed_at
+          })) as Project[],
+          tasks: (tRes.data || []) as Task[],
+          people: (uRes.data || []) as Person[]
+        });
       } catch (err) {
         console.error(err);
-        setState(DEFAULT_DATA);
       }
     };
     fetchData();
-  }, [loggedInInitials]);
+  }, [userEmail]);
 
   const saveData = useCallback(async (newState: AppState, updatedItem?: { type: 'project' | 'task' | 'person', data: any }) => {
     setSaveStatus('Saving…');
@@ -162,11 +131,14 @@ export default function App() {
       }
 
       let error;
+      const workspace_id = state.workspace_id;
+
       if (updatedItem.type === 'project') {
         const dbData = { ...updatedItem.data };
-        delete dbData.id; // Let DB handle ID or use it for upsert
+        delete dbData.id;
         const { error: err } = await supabase.from('projects').upsert({
           id: updatedItem.data.id,
+          workspace_id,
           name: updatedItem.data.name,
           desc: updatedItem.data.desc,
           status: updatedItem.data.status,
@@ -177,10 +149,16 @@ export default function App() {
         });
         error = err;
       } else if (updatedItem.type === 'task') {
-        const { error: err } = await supabase.from('tasks').upsert(updatedItem.data);
+        const { error: err } = await supabase.from('tasks').upsert({
+          ...updatedItem.data,
+          workspace_id
+        });
         error = err;
       } else if (updatedItem.type === 'person') {
-        const { error: err } = await supabase.from('profiles').upsert(updatedItem.data);
+        const { error: err } = await supabase.from('profiles').upsert({
+          ...updatedItem.data,
+          workspace_id
+        });
         error = err;
       }
 
@@ -234,20 +212,68 @@ export default function App() {
     const f = e.target as any;
     const email = f.email.value;
     const password = f.password.value;
+    const workspaceName = isSignUp ? f.workspaceName.value : null;
 
     try {
       if (isSignUp) {
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-        });
+        // 0. Check if a profile already exists for this email (Staff invite)
+        const { data: existingProfile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('email', email)
+          .maybeSingle();
+
+        // 1. Sign Up
+        const { data: authData, error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
-        if (data.user) {
-          showToast('Account created! Please check your email if verification is required.');
-          if (data.session) {
-            // Already logged in
+        
+        if (authData.user) {
+          if (existingProfile) {
+            // STAFF JOIN: Link existing profile to this new auth user
+            const { error: linkErr } = await supabase
+              .from('profiles')
+              .update({ id: authData.user.id })
+              .eq('email', email);
+            
+            if (linkErr) throw linkErr;
+            
+            const initials = existingProfile.initials;
+            if (authData.session) {
+               setUserEmail(email);
+               localStorage.setItem('user_email', email);
+            } else {
+              setLoginError('Verification email sent. Please check your inbox.');
+            }
           } else {
-            setLoginError('Verification email sent. Please check your inbox.');
+            // NEW OWNER: Create Workspace and Admin Profile
+            const { data: ws, error: wsErr } = await supabase
+              .from('workspaces')
+              .insert({ name: workspaceName, owner_id: authData.user.id })
+              .select()
+              .single();
+            
+            if (wsErr) throw wsErr;
+
+            const initials = email.substring(0, 2).toUpperCase();
+            const { error: profErr } = await supabase.from('profiles').insert({
+              id: authData.user.id,
+              workspace_id: ws.id,
+              initials,
+              name: email.split('@')[0],
+              email,
+              role: 'Workspace Owner',
+              permissions: 'admin',
+              color: COLORS[0]
+            });
+
+            if (profErr) throw profErr;
+
+            if (authData.session) {
+               setUserEmail(email);
+               localStorage.setItem('user_email', email);
+            } else {
+              setLoginError('Verification email sent. Please check your inbox.');
+            }
           }
         }
       } else {
@@ -257,6 +283,8 @@ export default function App() {
         });
 
         if (error) throw error;
+
+        // On successful sign in, the onAuthStateChange listener will handle fetching the profile
       }
     } catch (e: any) {
       setLoginError(e.message || 'Authentication failed');
@@ -267,11 +295,12 @@ export default function App() {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    setLoggedInInitials(null);
+    setUserEmail(null);
+    localStorage.removeItem('user_email');
     localStorage.removeItem('user_initials');
   };
 
-  if (!loggedInInitials) {
+  if (!userEmail) {
     return (
       <div className="login-screen">
         <div className="login-box">
@@ -285,6 +314,12 @@ export default function App() {
           )}
 
           <form onSubmit={handleLogin}>
+            {isSignUp && (
+              <div className="form-group">
+                <label className="form-label">Workspace Name</label>
+                <input type="text" name="workspaceName" className="form-input" placeholder="Acme Corp" required />
+              </div>
+            )}
             <div className="form-group">
               <label className="form-label">Email Address</label>
               <input type="email" name="email" className="form-input" placeholder="name@company.com" required />
@@ -307,9 +342,8 @@ export default function App() {
               </button>
             </div>
             {!isSignUp && (
-              <div className="mt-4 text-[10px] text-slate-400 pt-4 border-t border-slate-100">
-                Demo accounts: sophie@company.com / password123 (Admin)<br/>
-                theo@company.com / password123 (Viewer)
+              <div className="mt-4 text-[10px] text-slate-400 pt-4 border-t border-slate-100 italic text-center">
+                Secure enterprise workspace. Please contact your administrator if you cannot sign in.
               </div>
             )}
           </form>
@@ -679,6 +713,7 @@ export default function App() {
                   password: f['f-upass'].value || person.password,
                   permissions: f['f-uperms'].value as any,
                   role: f['f-urole'].value || 'Team Member',
+                  workspace_id: state.workspace_id
                 };
                 updateState(prev => ({
                   ...prev,
@@ -695,7 +730,7 @@ export default function App() {
                   role: f['f-urole'].value || 'Team Member',
                   color: COLORS[state.people.length % COLORS.length]
                 };
-                updateState(prev => ({ ...prev, people: [...prev.people, newPerson] }), { type: 'person', data: newPerson });
+                updateState(prev => ({ ...prev, people: [...prev.people, newPerson] }), { type: 'person', data: { ...newPerson, workspace_id: state.workspace_id } });
               }
               setModal(null);
             }}>
@@ -741,7 +776,7 @@ export default function App() {
       const task = data as Task;
       const addComment = (text: string) => {
         if (!text.trim()) return;
-        const newComm: Comment = { author: loggedInInitials || 'AN', text, time: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) };
+        const newComm: Comment = { author: currentUser?.initials || 'AN', text, time: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) };
         const updatedTask = { ...task, comments: [...task.comments, newComm] };
         updateState(prev => ({
           ...prev,
@@ -799,7 +834,7 @@ export default function App() {
                 addComment(t.value);
                 t.value = '';
               }}>
-                <Avatar initials={loggedInInitials || 'AN'} size="detail" />
+                <Avatar initials={currentUser?.initials || 'AN'} size="detail" />
                 <textarea className="form-textarea min-h-[44px] text-[12px]" name="comment" placeholder="Add a comment…" rows={2}></textarea>
                 <button type="submit" className="btn btn-primary py-1.5 px-2.5 text-[11px] self-end"><i className="ti ti-send"></i></button>
               </form>
@@ -826,6 +861,7 @@ export default function App() {
   const archiveProject = async (projectName: string) => {
     const projectToArchive = state.projects.find(p => p.name === projectName);
     if (!projectToArchive) return;
+    const workspace_id = state.workspace_id;
 
     const updatedProject = { ...projectToArchive, status: 'completed' as any, progress: 100, completedAt: new Date().toISOString() };
     updateState(prev => ({
@@ -836,7 +872,7 @@ export default function App() {
 
     // Persist tasks completion to Supabase
     try {
-      await supabase.from('tasks').update({ status: 'done' }).eq('project', projectName);
+      await supabase.from('tasks').update({ status: 'done' }).eq('project', projectName).eq('workspace_id', workspace_id);
     } catch (err) {
       console.error('Archive tasks error:', err);
     }
@@ -868,7 +904,7 @@ export default function App() {
         </nav>
         <div className="sidebar-footer">
           <div className="flex items-center gap-2 mb-2 px-2.5">
-            <Avatar initials={loggedInInitials || '??'} />
+            <Avatar initials={currentUser?.initials || '??'} />
             <div className="overflow-hidden">
                <div className="text-[11px] font-medium truncate">{currentUser?.name}</div>
                <div className="text-[9px] text-slate-500 capitalize">{currentUser?.permissions}</div>

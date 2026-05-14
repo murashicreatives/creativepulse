@@ -44,6 +44,7 @@ export interface Person {
 }
 
 export interface AppState {
+  workspace_id: string;
   projects: Project[];
   tasks: Task[];
   people: Person[];
