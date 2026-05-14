@@ -15,76 +15,93 @@ CREATE TABLE workspaces (
 );
 
 -- Profiles table (linked to auth.users and workspaces)
-create table profiles (
-  id uuid references auth.users(id),
-  workspace_id uuid references workspaces(id) on delete cascade,
-  initials text not null,
-  name text not null,
+CREATE TABLE profiles (
+  id uuid REFERENCES auth.users(id),
+  workspace_id uuid REFERENCES workspaces(id) ON DELETE CASCADE,
+  initials text NOT NULL,
+  name text NOT NULL,
   role text,
-  email text unique not null,
-  permissions text check (permissions in ('admin', 'editor', 'viewer')),
+  email text PRIMARY KEY,
+  permissions text CHECK (permissions IN ('admin', 'editor', 'viewer')),
   color jsonb -- {bg: string, txt: string}
 );
 
--- Primary key can be email or a composite, let's use email as a fallback unique ID
-alter table profiles add primary key (email);
-
 -- Projects table
-create table projects (
-  id bigint primary key generated always as identity,
-  workspace_id uuid references workspaces(id) on delete cascade,
-  name text not null,
+CREATE TABLE projects (
+  id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+  workspace_id uuid REFERENCES workspaces(id) ON DELETE CASCADE,
+  name text NOT NULL,
   "desc" text,
-  status text check (status in ('active', 'review', 'planning', 'done', 'completed')),
-  progress integer default 0,
-  members text[] default '{}',
+  status text CHECK (status IN ('active', 'review', 'planning', 'done', 'completed')),
+  progress integer DEFAULT 0,
+  members text[] DEFAULT '{}',
   color text,
   completed_at timestamp with time zone,
-  created_at timestamp with time zone default now()
+  created_at timestamp with time zone DEFAULT now()
 );
 
 -- Tasks table
-create table tasks (
-  id bigint primary key generated always as identity,
-  workspace_id uuid references workspaces(id) on delete cascade,
-  name text not null,
+CREATE TABLE tasks (
+  id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+  workspace_id uuid REFERENCES workspaces(id) ON DELETE CASCADE,
+  name text NOT NULL,
   project text, 
   assignee text,
   due date,
-  priority text check (priority in ('high', 'med', 'low')),
-  status text check (status in ('todo', 'inprogress', 'done')),
-  comments jsonb default '[]',
-  created_at timestamp with time zone default now()
+  priority text CHECK (priority IN ('high', 'med', 'low')),
+  status text CHECK (status IN ('todo', 'inprogress', 'done')),
+  comments jsonb DEFAULT '[]',
+  created_at timestamp with time zone DEFAULT now()
 );
 
 -- Enable Row Level Security (RLS)
-alter table workspaces enable row level security;
-alter table profiles enable row level security;
-alter table projects enable row level security;
-alter table tasks enable row level security;
+ALTER TABLE workspaces ENABLE ROW LEVEL SECURITY;
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 
--- Policies: Users can only access data within their own workspace
+-- Workspace Policies
+CREATE POLICY "Allow workspace insertion for all" ON workspaces 
+  FOR INSERT WITH CHECK (true);
 
-create policy "Workspace Access" on workspaces 
-  for all using (auth.uid() = owner_id);
+CREATE POLICY "Allow workspace view for owner" ON workspaces 
+  FOR SELECT USING (auth.uid() = owner_id);
 
--- Profile policies
-create policy "Profile Read by Own Email" on profiles 
-  for select using (email = (auth.jwt() ->> 'email'));
+CREATE POLICY "Allow workspace update for owner" ON workspaces 
+  FOR UPDATE USING (auth.uid() = owner_id);
 
-create policy "Profile Workspace Access" on profiles 
-  for all using (workspace_id in (select workspace_id from profiles where id = auth.uid()));
+-- Profile Policies
+CREATE POLICY "Allow profile insertion during signup" ON profiles
+  FOR INSERT WITH CHECK (true);
 
--- Project policies
-create policy "Project Access" on projects 
-  for all using (workspace_id in (select workspace_id from profiles where id = auth.uid()));
+CREATE POLICY "Allow users to read their own profile by email" ON profiles
+  FOR SELECT USING (email = (auth.jwt() ->> 'email'));
 
--- Task policies
-create policy "Task Access" on tasks 
-  for all using (workspace_id in (select workspace_id from profiles where id = auth.uid()));
+CREATE POLICY "Allow workspace members to view other profiles" ON profiles
+  FOR SELECT USING (
+    workspace_id IN (
+      SELECT workspace_id FROM profiles WHERE id = auth.uid()
+    )
+  );
 
--- Indices
-create index idx_profiles_workspace_id on profiles(workspace_id);
-create index idx_profiles_id on profiles(id);
-create index idx_projects_workspace_id on projects(workspace_id);
-create index idx_tasks_workspace_id on tasks(workspace_id);
+-- Project Policies
+CREATE POLICY "Project Workspace Access" ON projects 
+  FOR ALL USING (
+    workspace_id IN (
+      SELECT workspace_id FROM profiles WHERE id = auth.uid()
+    )
+  );
+
+-- Task Policies
+CREATE POLICY "Task Workspace Access" ON tasks 
+  FOR ALL USING (
+    workspace_id IN (
+      SELECT workspace_id FROM profiles WHERE id = auth.uid()
+    )
+  );
+
+-- Indices for performance
+CREATE INDEX IF NOT EXISTS idx_profiles_workspace_id ON profiles(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_profiles_id ON profiles(id);
+CREATE INDEX IF NOT EXISTS idx_projects_workspace_id ON projects(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_workspace_id ON tasks(workspace_id);
