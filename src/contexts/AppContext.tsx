@@ -61,6 +61,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const today = new Date().toISOString().split('T')[0];
 
+  // Helper for resilient Supabase queries with timeout
+  const sbQuery = async <T,>(promise: Promise<any>, timeoutMs = 8000): Promise<{data: T | null, error: any, status: number}> => {
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Request timed out')), timeoutMs)
+    );
+    try {
+      return await Promise.race([promise, timeoutPromise]) as any;
+    } catch (e: any) {
+      return { data: null, error: { message: e.message || 'Timeout' }, status: 408 };
+    }
+  };
+
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log(`[Auth] Event: ${event}`);
@@ -77,24 +89,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         // Check if profile exists (ID is best)
         console.log('[Auth] Verifying profile for UID:', session.user.id);
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('id, email, workspace_id')
-          .eq('id', session.user.id)
-          .maybeSingle();
+        const { data: profile, error } = await sbQuery<any>(
+          supabase.from('profiles').select('id, email, workspace_id').eq('id', session.user.id).maybeSingle()
+        );
 
         console.log('[Auth] Profile verify result:', { profile, error });
 
-        if (error) {
+        if (error && error.message !== 'Request timed out') {
           console.error('[Auth] Profile check error:', error);
-          return;
+          // Don't return, try email sync
         }
 
         if (profile) {
           console.log('[Auth] Profile verified by ID');
           if (profile.email?.toLowerCase() !== email) {
             console.log('[Auth] Updating profile email to match session');
-            await supabase.from('profiles').update({ email }).eq('id', session.user.id);
+            await sbQuery(supabase.from('profiles').update({ email }).eq('id', session.user.id));
           }
           setRefreshTrigger(prev => prev + 1);
           return;
@@ -102,32 +112,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         // If not by ID, try by email (legacy or invite case)
         console.log('[Auth] Profile not found by ID, checking by email...');
-        const { data: profileByEmail } = await supabase
-          .from('profiles')
-          .select('*')
-          .ilike('email', email)
-          .maybeSingle();
+        const { data: profileByEmail } = await sbQuery<any>(
+          supabase.from('profiles').select('*').ilike('email', email).maybeSingle()
+        );
 
         if (profileByEmail) {
           console.log('[Auth] Profile found by email, linking ID');
-          await supabase.from('profiles').update({ id: session.user.id }).eq('email', profileByEmail.email);
+          await sbQuery(supabase.from('profiles').update({ id: session.user.id }).eq('email', profileByEmail.email));
           setRefreshTrigger(prev => prev + 1);
           return;
         }
 
         // New user path: Ensure workspace then profile
         console.log('[Auth] New user detected. Initializing workspace...');
-        let { data: ws } = await supabase.from('workspaces').select('*').eq('owner_id', session.user.id).limit(1).maybeSingle();
+        let { data: ws } = await sbQuery<any>(
+          supabase.from('workspaces').select('*').eq('owner_id', session.user.id).limit(1).maybeSingle()
+        );
         
         if (!ws) {
           console.log('[Auth] Creating new workspace...');
-          const { data: newWs, error: wsErr } = await supabase
-            .from('workspaces')
-            .insert({ name: 'My Workspace', owner_id: session.user.id })
-            .select()
-            .maybeSingle(); // Better than single() if multiple exist somehow
-          
-          console.log('[Auth] Workspace creation result:', { newWs, wsErr });
+          const { data: newWs, error: wsErr } = await sbQuery<any>(
+            supabase.from('workspaces').insert({ name: 'My Workspace', owner_id: session.user.id }).select().maybeSingle()
+          );
           
           if (wsErr) {
             console.error('[Auth] Workspace creation failed:', wsErr);
@@ -150,9 +156,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             permissions: 'admin',
             color: COLORS[0]
           };
-          const { error: profErr } = await supabase.from('profiles').insert(pData);
-          
-          console.log('[Auth] Profile creation result:', { profErr });
+          const { error: profErr } = await sbQuery(supabase.from('profiles').insert(pData));
           
           if (profErr) {
             console.error('[Auth] Profile creation error:', profErr);
@@ -173,61 +177,60 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, [userEmail]);
 
+  // Diagnostic Sync Logic
   useEffect(() => {
     let retryTimeout: NodeJS.Timeout;
+    
     const fetchData = async (retries = 3) => {
       if (!userEmail) {
-        console.log('[Fetch] No userEmail. Session might not be ready.');
+        console.log('[Fetch] No userEmail. Sync deferred.');
         return;
       }
       
       try {
         setFetchError(null);
-        console.log(`[Fetch] Starting sync for ${userEmail}. Attempt: ${4 - retries}`);
+        console.log(`[Fetch] Syncing for ${userEmail}. Remaining attempts: ${retries}`);
         
-        // 1. Get profile and workspace
-        console.log('[Fetch] Querying profile for email:', userEmail);
-        const { data: profile, error: pErr, status, statusText } = await supabase
-          .from('profiles')
-          .select('id, workspace_id')
-          .ilike('email', userEmail)
-          .maybeSingle();
+        // 1. Get profile and workspace with timeout
+        console.log('[Fetch] Querying profile...');
         
-        console.log('[Fetch] Profile query result:', { profile, pErr, status, statusText });
+        const { data: profile, error: pErr, status } = await sbQuery<any>(
+          supabase.from('profiles').select('id, workspace_id').ilike('email', userEmail).maybeSingle()
+        );
+        
+        console.log('[Fetch] Profile query result:', status, pErr);
 
         if (pErr) {
-          console.error('[Fetch] Profile Query Error Details:', pErr);
-          throw new Error(`Profile Query Failed (${status}): ${pErr.message}. ${pErr.details || ''}`);
+          console.error('[Fetch] Profile Query Error:', pErr);
+          throw new Error(`DB Connection Issue (${status}): ${pErr.message}. Check your internet or Supabase status.`);
         }
 
         if (!profile) {
-          console.log(`[Fetch] Profile not found for ${userEmail}. Retries left: ${retries}`);
+          console.log(`[Fetch] No profile found for ${userEmail}. Retries: ${retries}`);
           if (retries > 0) {
-            console.log(`[Fetch] Retrying in 2s...`);
-            retryTimeout = setTimeout(() => fetchData(retries - 1), 2000);
+            retryTimeout = setTimeout(() => fetchData(retries - 1), 3000);
           } else {
-            console.error('[Fetch] Max retries reached. Profile missing.');
-            setFetchError(`Workspace profile for ${userEmail.toLowerCase()} not found. Try logging out and back in.`);
+            setFetchError(`Profile not found. If you just signed up, please refresh in a moment.`);
           }
           return;
         }
 
         const workspace_id = profile.workspace_id;
-        console.log('[Fetch] Found workspace_id:', workspace_id);
+        console.log('[Fetch] Workspace verified:', workspace_id);
 
-        // 2. Load all workspace data
+        // 2. Load all workspace data with timeout
         console.log('[Fetch] Loading collections...');
         const [pRes, tRes, uRes] = await Promise.all([
-          supabase.from('projects').select('*').eq('workspace_id', workspace_id),
-          supabase.from('tasks').select('*').eq('workspace_id', workspace_id),
-          supabase.from('profiles').select('*').eq('workspace_id', workspace_id)
+          sbQuery<any[]>(supabase.from('projects').select('*').eq('workspace_id', workspace_id)),
+          sbQuery<any[]>(supabase.from('tasks').select('*').eq('workspace_id', workspace_id)),
+          sbQuery<any[]>(supabase.from('profiles').select('*').eq('workspace_id', workspace_id))
         ]);
 
-        if (pRes.error) { console.error('[Fetch] Projects Error:', pRes.error); throw pRes.error; }
-        if (tRes.error) { console.error('[Fetch] Tasks Error:', tRes.error); throw tRes.error; }
-        if (uRes.error) { console.error('[Fetch] Profiles Error:', uRes.error); throw uRes.error; }
+        if (pRes.error) throw pRes.error;
+        if (tRes.error) throw tRes.error;
+        if (uRes.error) throw uRes.error;
 
-        console.log(`[Fetch] Success! Loaded ${pRes.data?.length} projects, ${tRes.data?.length} tasks.`);
+        console.log(`[Fetch] Success: Loaded ${pRes.data?.length} projects, ${tRes.data?.length} tasks.`);
 
         setState({
           workspace_id,
