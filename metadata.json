@@ -1,0 +1,6 @@
+{
+  "name": "Creative Pulse",
+  "description": "A full-stack project management application with Kanban boards, task tracking, team management, and persistent storage.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
