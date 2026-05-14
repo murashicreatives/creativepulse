@@ -312,10 +312,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
                   role: personData.role
                 })
               });
-              const body = await res.json();
+              let body: any = null;
+              try { body = await res.json(); } catch (e) { body = null; }
               if (res.ok) {
-                personData.id = body.user?.id || body.user?.data?.id;
-                personData.workspace_id = body.profile?.workspace_id || workspace_id;
+                personData.id = body?.user?.id || body?.user?.data?.id;
+                personData.workspace_id = body?.profile?.workspace_id || workspace_id;
               } else {
                 console.warn('[Supabase] create-user failed:', body);
                 showToast('Could not create auth user; saved locally.');

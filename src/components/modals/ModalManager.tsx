@@ -240,10 +240,11 @@ function PersonModal({ person, isMe }: { person?: Person, isMe: boolean }) {
                     role: newPerson.role
                   })
                 });
-                const body = await res.json();
-                if (!res.ok) throw body;
-                (newPerson as any).id = body.user?.id || body.user?.data?.id || (newPerson as any).id;
-                (newPerson as any).workspace_id = body.profile?.workspace_id || state?.workspace_id;
+                let body: any = null;
+                try { body = await res.json(); } catch (e) { body = null; }
+                if (!res.ok) throw body || { message: `HTTP ${res.status}` };
+                (newPerson as any).id = body?.user?.id || body?.user?.data?.id || (newPerson as any).id;
+                (newPerson as any).workspace_id = body?.profile?.workspace_id || state?.workspace_id;
                 showToast('Account created and linked.');
               } catch (err: any) {
                 console.error('Create account failed', err);
